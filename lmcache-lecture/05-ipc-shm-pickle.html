@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>05 IPC / SHM / Pickle · LMCache 图解讲义</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">⚡ LMCache 图解讲义</span>
+  <nav>
+    <a href="index.html">目录</a>
+    <a href="01-basics.html">基础概念</a>
+    <a href="02-components.html">组件组成</a>
+    <a href="03-dataflow.html">数据流</a>
+    <a href="04-lmcache-ascend.html">LMCache-Ascend</a>
+    <a href="05-ipc-shm-pickle.html" class="active">IPC / SHM / Pickle</a>
+    <a href="06-vllm-connector.html">vLLM 集成</a>
+    <a href="07-npu-ipc-stack.html">NPU/CUDA IPC 层级</a>
+    <a href="99-reference.html">代码索引</a>
+  </nav>
+</header>
+
+<main class="wrap">
+<h1>05 · CUDA IPC、SHM、Pickle 到底怎么运作</h1>
+<p class="lead">这三个词经常被混着说，其实它们解决的是三个不同的问题。先把问题分清，机制就自然清楚了。</p>
+
+<h2><span class="num">5.1</span>先分清三个问题</h2>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 320" role="img" aria-label="三种机制解决的不同问题">
+  <rect x="24" y="24" width="304" height="272" rx="10" fill="#1b1417" stroke="#ff9ecb" stroke-width="1.8"/>
+  <text class="big" x="42" y="54" fill="#ff9ecb">CUDA / NPU IPC</text>
+  <text class="lbl" x="42" y="80">问题：显存里的数据，</text>
+  <text class="lbl" x="42" y="100">怎么让<tspan fill="#fff" font-weight="700">另一个进程</tspan>直接用？</text>
+  <line x1="42" y1="114" x2="310" y2="114" stroke="#3a4757"/>
+  <text class="lbl2" x="42" y="136">对象：设备内存（HBM）</text>
+  <text class="lbl2" x="42" y="156">范围：同一台机器</text>
+  <text class="lbl2" x="42" y="176">拷贝次数：0（指针级共享）</text>
+  <text class="lbl2" x="42" y="196">传的东西：一个 handle（句柄）</text>
+  <text class="lbl2" x="42" y="222">典型用途：</text>
+  <text class="lbl2" x="42" y="242">vLLM 多进程共享权重</text>
+  <text class="lbl2" x="42" y="262">张量并行 / 权重传输引擎</text>
+  <text class="lbl2" x="42" y="286">LMCache：设备内存直接共享</text>
+
+  <rect x="348" y="24" width="304" height="272" rx="10" fill="#16221f" stroke="#7ce0d3" stroke-width="1.8"/>
+  <text class="big" x="366" y="54" fill="#7ce0d3">SHM 共享内存</text>
+  <text class="lbl" x="366" y="80">问题：主机内存里的数据，</text>
+  <text class="lbl" x="366" y="100">怎么让<tspan fill="#fff" font-weight="700">另一个进程</tspan>直接用？</text>
+  <line x1="366" y1="114" x2="634" y2="114" stroke="#3a4757"/>
+  <text class="lbl2" x="366" y="136">对象：主机内存（DRAM）</text>
+  <text class="lbl2" x="366" y="156">范围：同一台机器</text>
+  <text class="lbl2" x="366" y="176">拷贝次数：0（同一物理页）</text>
+  <text class="lbl2" x="366" y="196">传的东西：一个文件/名字</text>
+  <text class="lbl2" x="366" y="222">典型用途：</text>
+  <text class="lbl2" x="366" y="242">大对象跨进程传递（避免 pickle 复制）</text>
+  <text class="lbl2" x="366" y="262">vLLM 的 SHM 通信、LMCache 多进程</text>
+  <text class="lbl2" x="366" y="286">CPU 侧大缓冲区的进程间共用</text>
+
+  <rect x="672" y="24" width="304" height="272" rx="10" fill="#241c14" stroke="#ffb86b" stroke-width="1.8"/>
+  <text class="big" x="690" y="54" fill="#ffb86b">Pickle 序列化</text>
+  <text class="lbl" x="690" y="80">问题：一个<tspan fill="#fff" font-weight="700"> Python 对象</tspan>，</text>
+  <text class="lbl" x="690" y="100">怎么变成字节流？</text>
+  <line x1="690" y1="114" x2="958" y2="114" stroke="#3a4757"/>
+  <text class="lbl2" x="690" y="136">对象：任意 Python 对象</text>
+  <text class="lbl2" x="690" y="156">范围：同机或跨机都行</text>
+  <text class="lbl2" x="690" y="176">拷贝次数：1（必然复制）</text>
+  <text class="lbl2" x="690" y="196">传的东西：结构化字节流</text>
+  <text class="lbl2" x="690" y="222">典型用途：</text>
+  <text class="lbl2" x="690" y="242">元数据、字典、配置、小张量</text>
+  <text class="lbl2" x="690" y="262">LMCache 的 key 与 metadata</text>
+  <text class="lbl2" x="690" y="286">ZMQ 消息载荷</text>
+</svg>
+<figcaption><b>图 5-1</b> 三者不是竞争关系。<b>IPC 管显存，SHM 管内存，Pickle 管「对象 → 字节」</b>。实际系统里常常三个一起用。</figcaption>
+</figure>
+
+<table class="tbl">
+  <thead><tr><th></th><th>CUDA / NPU IPC</th><th>SHM</th><th>Pickle</th></tr></thead>
+  <tbody>
+    <tr><td>作用对象</td><td>设备内存</td><td>主机内存</td><td>Python 对象结构</td></tr>
+    <tr><td>是否复制数据</td><td><strong>不复制</strong>（共享物理页）</td><td><strong>不复制</strong>（映射同一页）</td><td><strong>必然复制</strong>（写出字节）</td></tr>
+    <tr><td>跨机器</td><td>不行（除特殊方案）</td><td>不行</td><td>可以（字节流发过去即可）</td></tr>
+    <tr><td>传递的「门票」</td><td>64 字节左右的 handle</td><td>名字（<code>/xxx</code>）或 fd</td><td>不需要门票，就是数据本身</td></tr>
+    <tr><td>谁提供</td><td>CUDA Runtime / CANN</td><td>操作系统内核</td><td>Python 标准库 / PyTorch</td></tr>
+    <tr><td>主要风险</td><td>设备号/上下文不匹配</td><td>生命周期管理（谁删除）</td><td>安全性（任意代码执行）</td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">5.2</span>Pickle：把对象变成字节</h2>
+
+<h3>它做了什么</h3>
+<p>Pickle 是一套「对象图 → 字节流」的协议。它<strong>不搬运任何显存</strong>，它只负责把「对象长什么样、里面有什么」写成一段可以被重建的指令序列。</p>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 380" role="img" aria-label="pickle 的工作原理">
+  <defs>
+    <marker id="pk1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#ffb86b"/></marker>
+  </defs>
+
+  <!-- 对象图 -->
+  <rect x="24" y="30" width="300" height="200" rx="9" fill="#241c14" stroke="#ffb86b"/>
+  <text class="ttl" x="40" y="54" fill="#ffb86b">内存中的对象图</text>
+  <rect x="40" y="68" width="130" height="40" rx="6" fill="#101820" stroke="#3a4757"/>
+  <text class="lbl2" x="52" y="86">dict</text>
+  <text class="lbl2" x="52" y="102">{'shape': ..}</text>
+  <rect x="182" y="68" width="126" height="40" rx="6" fill="#101820" stroke="#3a4757"/>
+  <text class="lbl2" x="194" y="86">tuple</text>
+  <text class="lbl2" x="194" y="102">(2, 32, 256, …)</text>
+  <rect x="40" y="120" width="268" height="40" rx="6" fill="#101820" stroke="#3a4757"/>
+  <text class="lbl2" x="52" y="138">Tensor</text>
+  <text class="lbl2" x="52" y="154">dtype / shape / stride + 一大段字节</text>
+  <rect x="40" y="172" width="268" height="46" rx="6" fill="#1b1417" stroke="#f97362"/>
+  <text class="lbl2" x="52" y="192">对象之间的<tspan fill="#fff">引用关系</tspan>也要保住</text>
+  <text class="lbl2" x="52" y="210">（同一个对象被引用两次，重建后仍是同一对象）</text>
+
+  <path d="M328,130 L364,130" stroke="#ffb86b" stroke-width="1.6" marker-end="url(#pk1)"/>
+  <text class="lbl2" x="316" y="120">pickle.dumps</text>
+
+  <!-- 字节流 -->
+  <rect x="368" y="30" width="290" height="200" rx="9" fill="#101820" stroke="#3a4757"/>
+  <text class="ttl" x="384" y="54">字节流（含指令）</text>
+  <rect x="384" y="68" width="258" height="146" rx="6" fill="#0b1017" stroke="#3a4757"/>
+  <text class="mono" x="396" y="90">\x80\x05  PROTO 5</text>
+  <text class="mono" x="396" y="110">}        EMPTY_DICT</text>
+  <text class="mono" x="396" y="130">X ...    SHORT_BINUNICODE</text>
+  <text class="mono" x="396" y="150">\x8c      SHORT_BINUNICODE</text>
+  <text class="mono" x="396" y="170">B ...    BINBYTES  ← 裸数据在这</text>
+  <text class="mono" x="396" y="190">\x86      TUPLE2</text>
+  <text class="mono" x="396" y="210">.        STOP</text>
+
+  <path d="M662,130 L698,130" stroke="#ffb86b" stroke-width="1.6" marker-end="url(#pk1)"/>
+  <text class="lbl2" x="650" y="120">pickle.loads</text>
+
+  <!-- 重建 -->
+  <rect x="702" y="30" width="274" height="200" rx="9" fill="#241c14" stroke="#ffb86b"/>
+  <text class="ttl" x="718" y="54" fill="#ffb86b">在另一个进程重建</text>
+  <text class="lbl2" x="718" y="78">· 按指令序列重新构造对象</text>
+  <text class="lbl2" x="718" y="100">· 张量：新建一个张量</text>
+  <text class="lbl2" x="718" y="122">  然后把字节<tspan fill="#fff">拷进新内存</tspan></text>
+  <text class="lbl2" x="718" y="144">· 所以 pickle 是「复制」</text>
+  <text class="lbl2" x="718" y="172">注意：CUDA 张量默认</text>
+  <text class="lbl2" x="718" y="192">不能这样重建（见下）</text>
+  <text class="lbl2" x="718" y="218">torch 会走自己的 reduce 路径</text>
+
+  <!-- 底部：reduce 协议 -->
+  <rect x="24" y="252" width="952" height="112" rx="9" fill="#141c26" stroke="#5ac8fa"/>
+  <text class="ttl" x="40" y="276" fill="#5ac8fa">关键机制：<tspan class="mono">__reduce_ex__</tspan> —— 对象自己决定怎么被序列化</text>
+  <text class="lbl2" x="40" y="300">pickle 遇到一个对象时，会问它：「你希望怎么被拆开？」对象返回一个元组（可调用对象 + 参数），pickle 把「调用谁、传什么参数」写进字节流。</text>
+  <text class="lbl2" x="40" y="324">PyTorch 的 Tensor 实现了这套协议：元数据（dtype/shape/stride/device）+ 一段数据字节。对 CPU 张量是直接内联字节；对 CUDA 张量则会走 IPC 或要求先 <tspan class="mono" fill="#a5e8ff">.cpu()</tspan>。</text>
+  <text class="lbl2" x="40" y="348">这也解释了 pickle 的安全问题：反序列化 = 按字节流里的指示去<tspan fill="#fff">调用函数</tspan>。恶意 pickle 可以执行任意代码。所以只能用在可信来源上。</text>
+</svg>
+<figcaption><b>图 5-2</b> Pickle 的三段：拆对象 → 写指令字节 → 按指令重建。它天生是「复制」语义，不要指望它省拷贝。</figcaption>
+</figure>
+
+<h3>Pickle 在 LMCache / vLLM 里的位置</h3>
+<ul>
+  <li><strong>LMCache 的远端传输</strong>：把 key、metadata、以及 KV 的字节打包发给 LMCache Server。数据面常走「自定义二进制头 + 裸字节」，控制面（键、元信息）走 pickle。</li>
+  <li><strong>vLLM 的 ZMQ 通信</strong>：调度器与 worker 之间传消息（含 EngineCore 相关元数据）时会用到 pickle，配合共享内存传大数据。</li>
+  <li><strong>缓存到磁盘</strong>：写文件时 payload 的字节布局往往是「自己定义的格式」，但读取时要知道形状/dtype，这部分信息就是序列化出来的。</li>
+</ul>
+
+<div class="note warn">
+  <span class="t">Pickle 的三个硬限制</span>
+  ① <strong>不安全</strong>：绝不要反序列化不可信来源（vLLM 甚至专门做过相关安全加固）。<br>
+  ② <strong>慢</strong>：纯 Python 层的编码/解码，大数据量下 CPU 会成为瓶颈。所以高性能路径都会绕过它，直接传裸字节。<br>
+  ③ <strong>CUDA 张量不能直接 pickle 出进程</strong>：它会报错或隐式触发一次显存→内存拷贝。要跨进程共享显存，必须用 CUDA IPC。
+</div>
+
+<h2><span class="num">5.3</span>SHM：同一块物理内存，映射到两个进程</h2>
+
+<h3>核心原理</h3>
+<p>操作系统的虚拟内存机制允许<strong>同一段物理页被映射进不同进程的地址空间</strong>。两个进程各自的虚拟地址不同，但读写的是同一块物理内存。这就是共享内存，零拷贝。</p>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 420" role="img" aria-label="共享内存映射原理">
+  <defs>
+    <marker id="sh1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#7ce0d3"/></marker>
+  </defs>
+
+  <!-- 进程 A -->
+  <rect x="40" y="30" width="250" height="130" rx="9" fill="#16221f" stroke="#7ce0d3"/>
+  <text class="ttl" x="56" y="54" fill="#7ce0d3">进程 A（vLLM worker）</text>
+  <rect x="56" y="66" width="218" height="34" rx="6" fill="#101820" stroke="#3a4757"/>
+  <text class="lbl2" x="68" y="88">虚拟地址 0x7f00_1000</text>
+  <rect x="56" y="106" width="218" height="40" rx="6" fill="#101820" stroke="#3a4757"/>
+  <text class="lbl2" x="68" y="124">普通堆内存（自己的）</text>
+  <text class="lbl2" x="68" y="140">write()/read() 走这里</text>
+
+  <!-- 进程 B -->
+  <rect x="710" y="30" width="250" height="130" rx="9" fill="#16221f" stroke="#7ce0d3"/>
+  <text class="ttl" x="726" y="54" fill="#7ce0d3">进程 B（LMCache 引擎）</text>
+  <rect x="726" y="66" width="218" height="34" rx="6" fill="#101820" stroke="#3a4757"/>
+  <text class="lbl2" x="738" y="88">虚拟地址 0x7f88_4000</text>
+  <rect x="726" y="106" width="218" height="40" rx="6" fill="#101820" stroke="#3a4757"/>
+  <text class="lbl2" x="738" y="124">普通堆内存（自己的）</text>
+  <text class="lbl2" x="738" y="140">和 A 完全隔离</text>
+
+  <!-- 中间物理页 -->
+  <rect x="330" y="180" width="340" height="90" rx="9" fill="#3a2a1d" stroke="#f2c14e" stroke-width="1.8"/>
+  <text class="ttl" x="346" y="206" fill="#f2c14e">同一段物理内存页</text>
+  <text class="lbl2" x="346" y="228">/dev/shm/lmcache_xxx（tmpfs 上的一个文件）</text>
+  <text class="lbl2" x="346" y="248">或匿名内存（通过 fd 传递）</text>
+  <text class="lbl2" x="346" y="266">页锁定 / pin 与否另说</text>
+
+  <path d="M165,160 L400,178" stroke="#7ce0d3" stroke-width="1.8" marker-end="url(#sh1)"/>
+  <path d="M835,160 L600,178" stroke="#7ce0d3" stroke-width="1.8" marker-end="url(#sh1)"/>
+  <text class="lbl2" x="200" y="184">mmap 映射</text>
+  <text class="lbl2" x="640" y="184">mmap 映射</text>
+
+  <text class="lbl2" x="330" y="292">两个进程看到的虚拟地址不同，物理地址相同 → 写一次，两边都变。</text>
+
+  <!-- 生命周期 -->
+  <rect x="40" y="312" width="920" height="94" rx="9" fill="#141c26" stroke="#5ac8fa"/>
+  <text class="ttl" x="56" y="336" fill="#5ac8fa">两种常见用法与生命周期</text>
+  <text class="lbl2" x="56" y="358">① <tspan class="mono" fill="#a5e8ff">multiprocessing.shared_memory.SharedMemory(name=...)</tspan>：有名字，挂在 <tspan class="mono" fill="#a5e8ff">/dev/shm</tspan> 下，谁都能按名字打开；<tspan fill="#ff6b6b">必须有人负责 unlink/close，否则泄漏</tspan>（/dev/shm 被占满会导致整个系统出问题）。</text>
+  <text class="lbl2" x="56" y="380">② <tspan class="mono" fill="#a5e8ff">torch.multiprocessing</tspan> 的匿名共享：父进程创建，通过 UNIX socket 用 <tspan class="mono" fill="#a5e8ff">SCM_RIGHTS</tspan> 把「文件描述符」传给子进程，无需名字、自动回收。</text>
+  <text class="lbl2" x="56" y="400">注意：跨机器完全无效。跨机只能靠网络（RDMA/TCP），此时必然发生拷贝。</text>
+</svg>
+<figcaption><b>图 5-3</b> SHM 的本质是「同一物理页，两个虚拟地址」。所以它零拷贝，但也因此<strong>只能在同机内使用</strong>。</figcaption>
+</figure>
+
+<h3>fd 传递：SHM 是怎么「告诉」另一个进程的</h3>
+<p>匿名共享内存没有名字，另一个进程要靠<strong>文件描述符传递</strong>找到它。这在 UNIX 域套接字上用 <code>SCM_RIGHTS</code> 实现，是 Python <code>multiprocessing</code> 与 PyTorch 张量共享的底层机制。</p>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 300" role="img" aria-label="文件描述符传递流程">
+  <defs>
+    <marker id="fd1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#7ce0d3"/></marker>
+  </defs>
+  <text class="ttl" x="24" y="30">传递的不是数据，是「打开这块内存的钥匙」</text>
+
+  <rect x="24" y="48" width="240" height="110" rx="8" fill="#16221f" stroke="#7ce0d3"/>
+  <text class="lbl" x="40" y="72">① 父进程</text>
+  <text class="lbl2" x="40" y="94">创建共享内存 → 得到 fd=7</text>
+  <text class="lbl2" x="40" y="114">把张量/缓冲写进去</text>
+  <text class="lbl2" x="40" y="138">准备把 fd 发出去</text>
+
+  <path d="M268,103 L318,103" stroke="#7ce0d3" stroke-width="1.8" marker-end="url(#fd1)"/>
+  <text class="lbl2" x="272" y="94">sendmsg()</text>
+  <text class="lbl2" x="272" y="122">携带 SCM_RIGHTS</text>
+
+  <rect x="322" y="48" width="330" height="110" rx="8" fill="#141c26" stroke="#5ac8fa"/>
+  <text class="lbl" x="338" y="72" fill="#5ac8fa">② UNIX 域套接字（内核中转）</text>
+  <text class="lbl2" x="338" y="96">内核在接收进程里「复制」出一个新的 fd</text>
+  <text class="lbl2" x="338" y="116">指向同一份 file description → 同一块内存</text>
+  <text class="lbl2" x="338" y="140">数据一字节都没动</text>
+
+  <path d="M656,103 L706,103" stroke="#7ce0d3" stroke-width="1.8" marker-end="url(#fd1)"/>
+
+  <rect x="710" y="48" width="266" height="110" rx="8" fill="#16221f" stroke="#7ce0d3"/>
+  <text class="lbl" x="726" y="72">③ 子进程</text>
+  <text class="lbl2" x="726" y="94">从 ancillary data 收到 fd</text>
+  <text class="lbl2" x="726" y="114">mmap 后即可直接读写</text>
+  <text class="lbl2" x="726" y="138">看到的是同一块物理内存</text>
+
+  <rect x="24" y="180" width="952" height="106" rx="8" fill="#241c14" stroke="#ffb86b"/>
+  <text class="ttl" x="40" y="204" fill="#ffb86b">工程上为什么值得知道这个细节</text>
+  <text class="lbl2" x="40" y="228">· 「共享内存」和「传 fd」是两个动作，理解这一点才能在报错时判断是「内存没建好」还是「fd 没送到」。</text>
+  <text class="lbl2" x="40" y="250">· PyTorch 的 CPU 张量共享（<tspan class="mono" fill="#a5e8ff">tensor.share_memory_()</tspan> / 默认的 file_descriptor 策略）走的就是这条路；子进程拿到的张量<tspan fill="#fff">与父进程共用同一块内存</tspan>。</text>
+  <text class="lbl2" x="40" y="272">· Windows 上没有 POSIX SHM 与 SCM_RIGHTS，PyTorch 走的是 Named Shared Memory + 名字传递 —— 这也是「Windows 上多进程共享张量行为不同」的根源。</text>
+</svg>
+<figcaption><b>图 5-4</b> fd 传递是 SHM 的「握手」环节。零拷贝的前提是这次握手成功。</figcaption>
+</figure>
+
+<h3>SHM 在 LMCache / vLLM 里的位置</h3>
+<ul>
+  <li><strong>vLLM 的进程间通信</strong>：调度器 ↔ worker 之间既要传控制消息（小），也要传大对象（如输出张量、采样结果）。大对象走 SHM，消息里只放「名字/句柄」。这就是很多实现里出现 <code>ShmRingBuffer</code> / 共享内存通信类的背景。</li>
+  <li><strong>LMCache 多进程模式</strong>：引擎跑在独立进程时，worker 与引擎之间传 KV 需要跨越进程边界。若走 CPU 内存，SHM 是最省拷贝的方式。</li>
+  <li><strong>与 pinned memory 的区别</strong>（重要）：<em>pinned 不等于 shared</em>。pin 只影响「设备/网卡能否直接 DMA 访问」；shared 只影响「其他进程能否看到」。一块内存可以同时是 pinned 和 shared，也可以是其中之一。</li>
+</ul>
+
+<div class="note">
+  <span class="t">记住这个区分</span>
+  <strong>pinned</strong> 解决「谁能高效访问」（DMA/RNIC），<strong>shared</strong> 解决「谁能看到」（跨进程）。<br>
+  LMCache 的 L1 缓冲通常是 <strong>pinned</strong>（为了显存↔内存快、为了能被 RDMA 网卡直接读）；当引擎与 worker 分进程时，才额外需要 <strong>shared</strong>。
+</div>
+
+<h2><span class="num">5.4</span>CUDA IPC：让另一个进程直接读写你的显存</h2>
+
+<h3>它解决的独特问题</h3>
+<p>显存不能像主机内存那样被随便 mmap 到别的进程（设备内存的地址空间由 GPU 的页表管理，且受 IOMMU/隔离保护）。所以 CUDA 提供了一套专门的 API：<strong>导出句柄 → 传递句柄 → 导入句柄 → 拿到一个可用的设备指针</strong>。</p>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 520" role="img" aria-label="CUDA IPC 完整序列">
+  <defs>
+    <marker id="ip1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#ff9ecb"/></marker>
+  </defs>
+
+  <!-- lanes -->
+  <rect x="30" y="20" width="260" height="38" rx="7" fill="#1b1417" stroke="#f97362"/>
+  <text class="lbl" x="44" y="45">进程 A（导出方，vLLM worker）</text>
+  <rect x="380" y="20" width="240" height="38" rx="7" fill="#1b1417" stroke="#f97362"/>
+  <text class="lbl" x="394" y="45">CUDA Runtime</text>
+  <rect x="710" y="20" width="260" height="38" rx="7" fill="#1b1417" stroke="#f97362"/>
+  <text class="lbl" x="724" y="45">进程 B（导入方）</text>
+  <line x1="160" y1="58" x2="160" y2="480" stroke="#3a4757" stroke-dasharray="4 4"/>
+  <line x1="500" y1="58" x2="500" y2="480" stroke="#3a4757" stroke-dasharray="4 4"/>
+  <line x1="840" y1="58" x2="840" y2="480" stroke="#3a4757" stroke-dasharray="4 4"/>
+
+  <text class="mono" x="34" y="88">① 在显存里分配一块（必须来自同一个 CUDA 上下文）</text>
+  <path d="M160,100 L498,100" stroke="#ff9ecb" stroke-width="1.5" marker-end="url(#ip1)"/>
+  <text class="mono" x="180" y="95">cudaMalloc() → devPtr</text>
+
+  <text class="mono" x="34" y="132">② 导出句柄：把「这块显存的身份证」取出来</text>
+  <path d="M160,144 L498,144" stroke="#ff9ecb" stroke-width="1.5" marker-end="url(#ip1)"/>
+  <text class="mono" x="180" y="139">cudaIpcGetMemHandle(&amp;handle, devPtr)</text>
+  <text class="lbl2" x="180" y="162">handle 结构很小（约 64 字节）：设备 UUID + 该分配的唯一标识</text>
+
+  <text class="mono" x="34" y="196">③ 传句柄：用任何 IPC 通道送过去（socket / pipe / 共享内存 / ZMQ）</text>
+  <path d="M160,210 L838,210" stroke="#7ce0d3" stroke-width="1.5" stroke-dasharray="6 3" marker-end="url(#ip1)"/>
+  <text class="lbl2" x="400" y="205">只传 64 字节，不搬数据</text>
+
+  <text class="mono" x="34" y="246">④ 导入句柄：在自己的地址空间里打开它</text>
+  <path d="M840,258 L502,258" stroke="#ff9ecb" stroke-width="1.5" marker-end="url(#ip1)"/>
+  <text class="mono" x="560" y="253">cudaIpcOpenMemHandle(&amp;peerPtr, handle, cudaIpcMemLazyEnablePeerAccess)</text>
+
+  <text class="mono" x="34" y="292">⑤ 现在 peerPtr 就是一个可用的设备指针，直接读写</text>
+  <rect x="502" y="300" width="468" height="44" rx="7" fill="#20181b" stroke="#f97362"/>
+  <text class="lbl2" x="518" y="320">kernel 里对 peerPtr 做 load/store，零拷贝</text>
+  <text class="lbl2" x="518" y="338">物理上通过 PCIe / NVLink C2C 访问到对方显存</text>
+
+  <text class="mono" x="34" y="374">⑥ 收尾：关闭映射</text>
+  <path d="M840,386 L502,386" stroke="#ff9ecb" stroke-width="1.5" marker-end="url(#ip1)"/>
+  <text class="mono" x="560" y="381">cudaIpcCloseMemHandle(peerPtr)</text>
+  <text class="lbl2" x="560" y="402">注意：导入方 close 之后，导出方才能释放原始显存</text>
+
+  <!-- 硬性约束 -->
+  <rect x="34" y="420" width="936" height="86" rx="8" fill="#1b1417" stroke="#f97362" stroke-width="1.6"/>
+  <text class="ttl" x="50" y="444" fill="#f97362">四条硬性约束（不满足就直接失败或读到垃圾）</text>
+  <text class="lbl2" x="50" y="466">① 必须同机。跨机不可能（设备页表无法跨主机共享）。</text>
+  <text class="lbl2" x="50" y="484">② 建议同设备：handle 里带设备标识，跨卡访问需要 Peer Access 能力（NVLink/PCIe P2P），否则报错。</text>
+  <text class="lbl2" x="50" y="502">③ 分配方进程不能先退出/释放显存：否则导入方的映射失效（悬垂指针）。</text>
+</svg>
+<figcaption><b>图 5-5</b> CUDA IPC 六步曲。整个过程中<b>只有 64 字节的 handle 在网络/管道上飞</b>，KV 数据本身一动不动——这就是它能做到零拷贝的原因。</figcaption>
+</figure>
+
+<h3>PyTorch 把它包装成了什么</h3>
+<p>你平时不直接调 <code>cudaIpc*</code>，PyTorch 把它们包装成了 storage 层面的能力，并配合 <code>torch.multiprocessing</code> 自动完成句柄传递。</p>
+
+<figure class="code">
+<figcaption><span class="path">PyTorch 层的封装（对应关系，非逐行原文）</span></figcaption>
+<pre><code><span class="c-com"># ── 底层：CUDA Runtime 的 C API ──────────────────────────</span>
+<span class="c-com">#   cudaIpcGetMemHandle / cudaIpcOpenMemHandle / cudaIpcCloseMemHandle</span>
+
+<span class="c-com"># ── PyTorch 包装（内部/私有 API，名字带下划线）──────────────</span>
+<span class="c-com"># 导出方：</span>
+handle, size, offset, device = tensor.<span class="c-fn">untyped_storage</span>().<span class="c-fn">_share_cuda_</span>()
+<span class="c-com">#   → 内部调用 cudaIpcGetMemHandle</span>
+<span class="c-com">#   → 同时对「这个 storage 被共享」做引用计数，防止提前释放</span>
+
+<span class="c-com"># 导入方：</span>
+storage = torch.<span class="c-fn">UntypedStorage</span>.<span class="c-fn">_new_shared_cuda</span>(device, handle, size, offset, ...)
+t = torch.<span class="c-fn">tensor</span>(storage).<span class="c-fn">view</span>(dtype).<span class="c-fn">reshape</span>(shape)
+<span class="c-com">#   → 内部调用 cudaIpcOpenMemHandle，得到可用的设备指针</span>
+
+<span class="c-com"># ── 上层：torch.multiprocessing 自动处理句柄传递 ────────────</span>
+<span class="c-com">#   fork 模式：句柄可继承</span>
+<span class="c-com">#   spawn 模式：无法继承，必须由父进程用 fd / 队列把 handle 送过去</span>
+<span class="c-com">#   这就是为什么 spawn 下共享 CUDA 张量比 fork 更容易踩坑</span>
+
+<span class="c-com"># ── 显式共享（很少这么用）────────────────────────────────</span>
+tensor.<span class="c-fn">share_memory_</span>()   <span class="c-com"># CPU 张量 → 共享内存（SHM）；CUDA 张量 → 走 CUDA IPC 路径</span></code></pre>
+</figure>
+
+<div class="note tip">
+  <span class="t">一个常被问的问题：LMCache 自己用 CUDA IPC 吗？</span>
+  在「LMCache 以库的形式嵌入 vLLM worker 进程」的默认模式下，<strong>KV 的搬运是同进程内的 DMA 拷贝（显存→pinned 内存），不需要 CUDA IPC</strong>。<br>
+  CUDA IPC 真正重要的场合是：<strong>多个进程需要共享同一块显存缓冲区</strong>——例如多进程模式、跨进程共享权重、以及 vLLM 自己的多进程张量传递。
+  所以读 LMCache 代码时，看到 IPC 的地方往往在「进程边界」而不是「缓存逻辑」里。
+</div>
+
+<h2><span class="num">5.5</span>三者如何协同：数据从显存到远端进程</h2>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 380" role="img" aria-label="三种机制协同">
+  <defs>
+    <marker id="co1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#8b98a5"/></marker>
+  </defs>
+
+  <!-- 场景 -->
+  <rect x="24" y="20" width="952" height="60" rx="8" fill="#141c26" stroke="#5ac8fa"/>
+  <text class="lbl" x="40" y="44" fill="#5ac8fa">场景：worker 进程把 KV 交给一个独立的 LMCache 引擎进程，引擎再发到远端 server</text>
+  <text class="lbl2" x="40" y="66">这是一个「跨进程 + 跨机」的复合场景，三种机制会同时出现。看清它们各自负责哪一段，是理解整个系统的关键。</text>
+
+  <!-- 流程 -->
+  <rect x="24" y="96" width="180" height="76" rx="8" fill="#1b1417" stroke="#f97362"/>
+  <text class="lbl" x="38" y="118" fill="#f97362">① 设备显存</text>
+  <text class="lbl2" x="38" y="138">paged KV</text>
+  <text class="lbl2" x="38" y="158">（vLLM 算完的地方）</text>
+
+  <path d="M208,134 L246,134" stroke="#8b98a5" stroke-width="1.6" marker-end="url(#co1)"/>
+  <text class="lbl2" x="196" y="124">DMA</text>
+
+  <rect x="250" y="96" width="180" height="76" rx="8" fill="#241c14" stroke="#f2c14e"/>
+  <text class="lbl" x="264" y="118" fill="#f2c14e">② pinned 主机内存</text>
+  <text class="lbl2" x="264" y="138">LMCache 的 L1 缓冲</text>
+  <text class="lbl2" x="264" y="158">同时也是 SHM 共享的</text>
+
+  <path d="M434,134 L472,134" stroke="#8b98a5" stroke-width="1.6" marker-end="url(#co1)"/>
+  <text class="lbl2" x="428" y="124">SHM</text>
+
+  <rect x="476" y="96" width="180" height="76" rx="8" fill="#16221f" stroke="#7ce0d3"/>
+  <text class="lbl" x="490" y="118" fill="#7ce0d3">③ 引擎进程</text>
+  <text class="lbl2" x="490" y="138">零拷贝看到同一块内存</text>
+  <text class="lbl2" x="490" y="158">（若同进程则省掉这步）</text>
+
+  <path d="M660,134 L698,134" stroke="#8b98a5" stroke-width="1.6" marker-end="url(#co1)"/>
+  <text class="lbl2" x="648" y="124">pickle + 裸字节</text>
+
+  <rect x="702" y="96" width="274" height="76" rx="8" fill="#171420" stroke="#a78bfa"/>
+  <text class="lbl" x="716" y="118" fill="#a78bfa">④ 通过网络到远端 server</text>
+  <text class="lbl2" x="716" y="138">控制面走 pickle（key/metadata）</text>
+  <text class="lbl2" x="716" y="158">数据面走裸字节（TCP/RDMA）</text>
+
+  <!-- 说明 -->
+  <rect x="24" y="192" width="308" height="168" rx="8" fill="#1b1417" stroke="#ff9ecb"/>
+  <text class="ttl" x="40" y="216" fill="#ff9ecb">IPC 在哪？</text>
+  <text class="lbl2" x="40" y="240">如果 ② 那块缓冲需要被<tspan fill="#fff">多个设备进程</tspan>同时读写，</text>
+  <text class="lbl2" x="40" y="260">或者要共享的是<tspan fill="#fff">设备内存本身</tspan>，</text>
+  <text class="lbl2" x="40" y="280">才需要 CUDA/NPU IPC。</text>
+  <text class="lbl2" x="40" y="306">判断口诀：</text>
+  <text class="lbl2" x="40" y="328">跨进程 + 设备内存 → IPC</text>
+  <text class="lbl2" x="40" y="348">跨进程 + 主机内存 → SHM</text>
+
+  <rect x="346" y="192" width="308" height="168" rx="8" fill="#16221f" stroke="#7ce0d3"/>
+  <text class="ttl" x="362" y="216" fill="#7ce0d3">SHM 在哪？</text>
+  <text class="lbl2" x="362" y="240">凡是「同一台机器上两个进程要共用主机内存」</text>
+  <text class="lbl2" x="362" y="260">就是 SHM 的舞台。</text>
+  <text class="lbl2" x="362" y="286">LMCache 的多进程模式、</text>
+  <text class="lbl2" x="362" y="306">vLLM 的跨进程大对象传递</text>
+  <text class="lbl2" x="362" y="332">都在这里。</text>
+
+  <rect x="668" y="192" width="308" height="168" rx="8" fill="#241c14" stroke="#ffb86b"/>
+  <text class="ttl" x="684" y="216" fill="#ffb86b">Pickle 在哪？</text>
+  <text class="lbl2" x="684" y="240">只有需要「描述结构」的地方：</text>
+  <text class="lbl2" x="684" y="262">· key（模型名/哈希）</text>
+  <text class="lbl2" x="684" y="282">· metadata（shape/dtype/token_ids）</text>
+  <text class="lbl2" x="684" y="302">· 控制消息</text>
+  <text class="lbl2" x="684" y="330">绝不用它搬大块 KV 数据（太慢）。</text>
+</svg>
+<figcaption><b>图 5-6</b> 三者协同。选型口诀：<b>跨进程看介质（设备内存→IPC，主机内存→SHM），需要结构描述→pickle</b>。</figcaption>
+</figure>
+
+<h2><span class="num">5.6</span>常见坑速查</h2>
+<table class="tbl">
+  <thead><tr><th>症状</th><th>最可能的原因</th><th>机制归属</th></tr></thead>
+  <tbody>
+    <tr><td>反序列化报 <code>AttributeError: Can't get attribute …</code></td><td>类的定义位置变了（模块路径不匹配）</td><td>Pickle</td></tr>
+    <tr><td><code>RuntimeError: Cannot re-initialize CUDA in forked subprocess</code></td><td>fork 之后才初始化 CUDA</td><td>CUDA 进程模型</td></tr>
+    <tr><td>CUDA 张量跨进程共享失败 / 读到垃圾</td><td>设备号不同、或导出方先释放了显存</td><td>CUDA IPC</td></tr>
+    <tr><td><code>/dev/shm</code> 被占满，整个系统抖动</td><td>SHM 段没被 unlink（Dataloader/多进程经典问题）</td><td>SHM</td></tr>
+    <tr><td>性能远低于预期，<code>top</code> 里 CPU 很忙</td><td>大数据走了 pickle（Python 层编解码）</td><td>Pickle</td></tr>
+    <tr><td>显存拷贝带宽只有理论值的一半</td><td>目标内存没 pin（多了一次页面拷贝）</td><td>pinned memory</td></tr>
+    <tr><td>Windows 上多进程共享张量行为异常</td><td>无 POSIX SHM / SCM_RIGHTS，走的是命名共享内存</td><td>SHM</td></tr>
+    <tr><td>偶发的数值错误（不是崩溃）</td><td>流/事件同步点不对（layerwise 尤其容易）</td><td>Stream/Event</td></tr>
+  </tbody>
+</table>
+
+<div class="pager">
+  <a href="04-lmcache-ascend.html">← 上一章：LMCache-Ascend</a>
+  <a class="next" href="06-vllm-connector.html">下一章：vLLM 集成 →</a>
+</div>
+
+<footer>LMCache 图解讲义 · 05 IPC / SHM / Pickle</footer>
+</main>
+</body>
+</html>

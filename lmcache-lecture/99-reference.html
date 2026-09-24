@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>99 代码索引与术语表 · LMCache 图解讲义</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">⚡ LMCache 图解讲义</span>
+  <nav>
+    <a href="index.html">目录</a>
+    <a href="01-basics.html">基础概念</a>
+    <a href="02-components.html">组件组成</a>
+    <a href="03-dataflow.html">数据流</a>
+    <a href="04-lmcache-ascend.html">LMCache-Ascend</a>
+    <a href="05-ipc-shm-pickle.html">IPC / SHM / Pickle</a>
+    <a href="06-vllm-connector.html">vLLM 集成</a>
+    <a href="07-npu-ipc-stack.html">NPU/CUDA IPC 层级</a>
+    <a href="99-reference.html" class="active">代码索引</a>
+  </nav>
+</header>
+
+<main class="wrap">
+<h1>99 · 代码索引、术语表与核对清单</h1>
+<p class="lead">这一章是全篇的「索引」：所有提到的文件路径、类名、API、配置项集中在这里，方便你回源码逐个核对。</p>
+
+<h2><span class="num">9.1</span>先说明本讲义的可信度边界</h2>
+<div class="note warn">
+  <span class="t">请按这个标准使用本讲义</span>
+  <table class="tbl" style="margin-top:10px">
+    <thead><tr><th>内容类型</th><th>可信度</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>概念、架构、机制原理（L1/L2/L3、IPC/SHM/pickle、DMA、layerwise 思想）</td><td><span class="tag disk">高</span></td><td>这些是稳定的系统设计知识，不随版本变化</td></tr>
+      <tr><td>类名与方法名（<code>LMCacheConnectorV1Impl</code>、<code>register_kv_caches</code>、<code>get_num_new_matched_tokens</code>…）</td><td><span class="tag cpu">较高</span></td><td>这些名字确实存在于对应仓库，但<strong>签名与细节随版本变化</strong></td></tr>
+      <tr><td>目录结构（<code>v1/distributed/l2_adapters/</code> 等）</td><td><span class="tag cpu">中</span></td><td>较新加入的模块位置可能已调整</td></tr>
+      <tr><td>LMCache-Ascend 的内部实现细节</td><td><span class="tag gpu">待核实</span></td><td>网络受限无法读源码，只依据 README/文档描述（见第 4 章开头）</td></tr>
+      <tr><td>性能数字（带宽、延迟量级）</td><td><span class="tag cpu">数量级</span></td><td>只用于建立直觉，不是 benchmark 结果，务必自己实测</td></tr>
+    </tbody>
+  </table>
+  <strong>为什么无法核对源码：</strong>本次会话的网络访问被限制，只有 <code>github.com</code> 可解析；  <code>raw.githubusercontent.com</code>、<code>cdn.jsdelivr.net</code>、<code>docs.lmcache.ai</code>、<code>docs.vllm.ai</code>、
+  <code>deepwiki.com</code>、<code>hiascend.com</code>、<code>arxiv.org</code>、<code>huggingface.co</code>、<code>gitee.com</code> 全部返回
+  「域名解析到非公网地址」而拒绝抓取。GitHub 的网页是客户端渲染，抓到的 HTML 里没有源码正文。
+  所以我保留了真实的文件路径与 API 名字（这些有把握），并在不确定处明确标注，<strong>没有编造具体代码行</strong>。
+</div>
+
+<h2><span class="num">9.2</span>LMCache 主仓库：文件与组件索引</h2>
+<table class="tbl">
+  <thead><tr><th>路径（以 dev 分支为参考）</th><th>内容</th><th>讲在哪</th></tr></thead>
+  <tbody>
+    <tr><td><code>lmcache/v1/cache_engine.py</code></td><td><code>LMCacheEngine</code>、<code>LMCacheEngineBuilder</code>、装配逻辑</td><td><a href="02-components.html">02</a> <a href="03-dataflow.html">03</a></td></tr>
+    <tr><td><code>lmcache/v1/config.py</code></td><td><code>LMCacheEngineConfig</code>、<code>LMCacheEngineMetadata</code></td><td><a href="03-dataflow.html">03</a></td></tr>
+    <tr><td><code>lmcache/v1/storage_backend/storage_manager.py</code></td><td><code>StorageManager</code>、<code>reserve_put</code> / <code>get_blocking</code></td><td><a href="02-components.html">02</a></td></tr>
+    <tr><td><code>lmcache/v1/storage_backend/local_cpu_backend.py</code></td><td><code>LocalCPUBackend</code>（L1）</td><td><a href="02-components.html">02</a></td></tr>
+    <tr><td><code>lmcache/v1/storage_backend/local_disk_backend.py</code></td><td><code>LocalDiskBackend</code>（L2）</td><td><a href="02-components.html">02</a></td></tr>
+    <tr><td><code>lmcache/v1/storage_backend/remote_backend.py</code></td><td><code>RemoteBackend</code>（L3，ZMQ）</td><td><a href="02-components.html">02</a></td></tr>
+    <tr><td><code>lmcache/v1/storage_backend/nixl_store.py</code></td><td>NIXL 传输（跨实例/P2P）</td><td><a href="02-components.html">02</a></td></tr>
+    <tr><td><code>lmcache/v1/storage_backend/abstract_backend.py</code></td><td>后端接口定义</td><td><a href="02-components.html">02</a></td></tr>
+    <tr><td><code>lmcache/v1/memory_management.py</code></td><td>Allocator 家族、<code>MemoryObj</code></td><td><a href="02-components.html">02</a></td></tr>
+    <tr><td><code>lmcache/v1/token_database.py</code></td><td><code>ChunkedTokenDatabase</code>、<code>process_tokens</code></td><td><a href="02-components.html">02</a> <a href="03-dataflow.html">03</a></td></tr>
+    <tr><td><code>lmcache/v1/gpu_connector.py</code></td><td><code>VLLMPagedMemGPUConnectorV2</code> / <code>…Layerwise…</code> / <code>CreateGPUConnector</code></td><td><a href="02-components.html">02</a></td></tr>
+    <tr><td><code>lmcache/v1/cpu_connector.py</code></td><td>不涉及设备时的连接器</td><td><a href="02-components.html">02</a></td></tr>
+    <tr><td><code>lmcache/v1/cache_interface.py</code></td><td>引擎接口、<code>CacheEngineKey</code></td><td><a href="02-components.html">02</a></td></tr>
+    <tr><td><code>lmcache/v1/blend_engine.py</code></td><td><code>BlendEngine</code>（CPU 侧模糊前缀匹配）</td><td><a href="02-components.html">02</a></td></tr>
+    <tr><td><code>lmcache/v1/distributed/l2_adapters/</code></td><td><code>L2AdapterInterface</code>、RESP / NIXL / Mooncake adapter</td><td><a href="02-components.html">02</a></td></tr>
+    <tr><td><code>lmcache/v1/multiprocess/</code></td><td>多进程模式（引擎独立进程）</td><td><a href="02-components.html">02</a> <a href="05-ipc-shm-pickle.html">05</a></td></tr>
+    <tr><td><code>lmcache/v1/observability/</code></td><td>指标与统计</td><td><a href="02-components.html">02</a></td></tr>
+    <tr><td><code>lmcache/server/server.py</code></td><td>独立 LMCache Server（L3）</td><td><a href="02-components.html">02</a></td></tr>
+    <tr><td><code>lmcache/integration/vllm/lmcache_connector.py</code></td><td>vLLM 连接器实现</td><td><a href="06-vllm-connector.html">06</a></td></tr>
+    <tr><td><code>lmcache/integration/vllm/vllm_v1_adapter.py</code></td><td><code>LMCacheConnectorV1Impl</code> —— 核心适配器</td><td><a href="06-vllm-connector.html">06</a></td></tr>
+    <tr><td><code>lmcache/integration/vllm/lmcache_connector_v1_085.py</code></td><td>针对 vLLM 0.8.5 的版本专用实现</td><td><a href="06-vllm-connector.html">06</a></td></tr>
+    <tr><td><code>lmcache/integration/vllm/vllm_adapter.py</code></td><td>vLLM v0 时代的旧适配</td><td><a href="06-vllm-connector.html">06</a></td></tr>
+    <tr><td><code>lmcache/v1/serial_utils.py</code></td><td>序列化工具</td><td><a href="05-ipc-shm-pickle.html">05</a></td></tr>
+    <tr><td><code>csrc/</code></td><td>C++/CUDA 算子（多层 KV 搬运）</td><td><a href="02-components.html">02</a> <a href="04-lmcache-ascend.html">04</a></td></tr>
+    <tr><td><code>docs/design/ARCHITECTURE_MULTI_HARDWARE.md</code></td><td>多硬件架构设计文档（值得读）</td><td><a href="04-lmcache-ascend.html">04</a></td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">9.3</span>vLLM 仓库：与 LMCache 相关的文件</h2>
+<table class="tbl">
+  <thead><tr><th>路径</th><th>内容</th><th>讲在哪</th></tr></thead>
+  <tbody>
+    <tr><td><code>vllm/distributed/kv_transfer/kv_connector/factory.py</code></td><td><code>KVConnectorFactory</code>、<code>register_connector</code></td><td><a href="06-vllm-connector.html">06</a></td></tr>
+    <tr><td><code>vllm/distributed/kv_transfer/kv_connector/v1/base.py</code></td><td><code>KVConnectorBase_V1</code>、<code>KVConnectorRole</code>、<code>KVConnectorOutput</code></td><td><a href="06-vllm-connector.html">06</a></td></tr>
+    <tr><td><code>…/v1/lmcache_connector.py</code></td><td><code>LMCacheConnectorV1</code>（角色分派 + 委托）</td><td><a href="06-vllm-connector.html">06</a></td></tr>
+    <tr><td><code>…/v1/lmcache_integration/vllm_v1_adapter.py</code></td><td><code>LMCacheConnectorV1Impl</code>、<code>LoadSpec</code> / <code>SaveSpec</code>、<code>RequestTracker</code></td><td><a href="06-vllm-connector.html">06</a></td></tr>
+    <tr><td><code>…/v1/lmcache_integration/utils.py</code></td><td><code>create_lmcache_metadata</code>、<code>ENGINE_NAME</code> 等</td><td><a href="06-vllm-connector.html">06</a></td></tr>
+    <tr><td><code>vllm/config/kv_transfer.py</code></td><td><code>KVTransferConfig</code>（<code>kv_connector</code> / <code>kv_role</code> / extra config）</td><td><a href="06-vllm-connector.html">06</a></td></tr>
+    <tr><td><code>vllm/v1/core/sched/scheduler.py</code></td><td>调度侧钩子调用点</td><td><a href="06-vllm-connector.html">06</a></td></tr>
+    <tr><td><code>vllm/v1/worker/gpu_model_runner.py</code></td><td>执行侧钩子调用点（load / layerwise / save）</td><td><a href="06-vllm-connector.html">06</a></td></tr>
+    <tr><td><code>vllm/v1/engine/core.py</code></td><td>EngineCore：调度输出（含 connector meta）下发</td><td><a href="06-vllm-connector.html">06</a></td></tr>
+    <tr><td><code>…/v1/nixl_connector.py</code></td><td>另一个连接器实现，机制可类比</td><td><a href="06-vllm-connector.html">06</a></td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">9.4</span>API 名字分门别类</h2>
+<div class="grid c2">
+  <div class="card">
+    <h4>键与元数据</h4>
+    <ul>
+      <li><code>CacheEngineKey(model_name, world_size, worker_id, chunk_hash)</code></li>
+      <li><code>TokenDatabase.process_tokens(tokens, mask)</code></li>
+      <li><code>LMCacheEngineMetadata</code>（模型名、层数、KV 形状、dtype、并行度）</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>引擎与存储</h4>
+    <ul>
+      <li><code>LMCacheEngine.store() / retrieve() / lookup()</code></li>
+      <li><code>StorageManager.reserve_put() / reserve_get() / get_blocking()</code></li>
+      <li><code>Allocator.allocate()</code> → <code>MemoryObj</code>（<code>.data_ptr</code> / <code>.tensor</code>）</li>
+      <li><code>backend.submit_put_task()</code> / <code>contains()</code> / <code>get_blocking()</code></li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>设备搬运</h4>
+    <ul>
+      <li><code>GPUConnector.from_gpu(...)</code> / <code>to_gpu(...)</code></li>
+      <li><code>CreateGPUConnector(config, metadata)</code></li>
+      <li>CUDA：<code>cudaMemcpyAsync</code>、<code>torch.cuda.Stream/Event</code></li>
+      <li>NPU：<code>aclrtMemcpyAsync</code>、<code>torch.npu.Stream/Event</code></li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>vLLM 连接器接口</h4>
+    <ul>
+      <li>调度侧：<code>get_num_new_matched_tokens</code>、<code>update_state_after_alloc</code>、<code>build_connector_meta</code>、<code>request_finished</code></li>
+      <li>执行侧：<code>register_kv_caches</code>、<code>start_load_kv</code>、<code>wait_for_layer_load</code>、<code>save_kv_layer</code>、<code>wait_for_save</code>、<code>get_finished</code></li>
+      <li><code>register_connector(name, module, class)</code></li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>CUDA IPC / 内存</h4>
+    <ul>
+      <li><code>cudaIpcGetMemHandle</code> / <code>cudaIpcOpenMemHandle</code> / <code>cudaIpcCloseMemHandle</code></li>
+      <li><code>cudaHostAlloc</code> / <code>cudaHostRegister</code>（页锁定）</li>
+      <li><code>Storage._share_cuda_()</code> / <code>Storage._new_shared_cuda(...)</code></li>
+      <li><code>tensor.share_memory_()</code></li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>CANN / 昇腾侧</h4>
+    <ul>
+      <li><code>aclrtMalloc</code> / <code>aclrtMemcpyAsync</code> / <code>aclrtStream</code> / <code>aclrtEvent</code></li>
+      <li>IPC 系列：导出 key / 导入 key / open / close / set-import-pid（<span class="tag acc">以你版本文档为准</span>）</li>
+      <li><code>torch_npu</code>：<code>torch.npu.Stream</code>、<code>torch.npu.Event</code>、pin memory 支持</li>
+      <li><code>torch_npu</code> 文档中的「内存共享（IPC）」章节</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>进程间通信</h4>
+    <ul>
+      <li><code>multiprocessing.shared_memory.SharedMemory(name=...)</code></li>
+      <li><code>multiprocessing.reduction</code>（fd 传递 / file_descriptor 策略）</li>
+      <li><code>SCM_RIGHTS</code>（UNIX 域套接字的 fd 传递）</li>
+      <li><code>/dev/shm</code>（tmpfs）</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>序列化</h4>
+    <ul>
+      <li><code>pickle.dumps()</code> / <code>pickle.loads()</code></li>
+      <li><code>__reduce_ex__</code>（对象自定义序列化协议）</li>
+      <li><code>torch.save()</code> / <code>torch.load()</code>（自带 zip 容器）</li>
+    </ul>
+  </div>
+</div>
+
+<h2><span class="num">9.5</span>配置项与环境变量</h2>
+<table class="tbl">
+  <thead><tr><th>名字</th><th>归属</th><th>作用</th></tr></thead>
+  <tbody>
+    <tr><td><code>kv_connector</code></td><td>vLLM <code>KVTransferConfig</code></td><td>填 <code>"LMCacheConnectorV1"</code></td></tr>
+    <tr><td><code>kv_role</code></td><td>vLLM <code>KVTransferConfig</code></td><td><code>kv_both</code> / <code>kv_producer</code> / <code>kv_consumer</code></td></tr>
+    <tr><td><code>kv_connector_extra_config</code></td><td>vLLM</td><td>透传给连接器的额外参数</td></tr>
+    <tr><td><code>--kv-transfer-config</code></td><td>vLLM CLI</td><td>上述配置的 JSON 入口</td></tr>
+    <tr><td><code>chunk_size</code></td><td>LMCache</td><td>缓存与哈希粒度（常见 256）</td></tr>
+    <tr><td><code>local_cpu</code> / <code>max_local_cpu_size</code></td><td>LMCache</td><td>L1 开关与容量（GB）</td></tr>
+    <tr><td><code>local_disk</code> / <code>max_local_disk_size</code></td><td>LMCache</td><td>L2 目录与容量</td></tr>
+    <tr><td><code>remote_url</code></td><td>LMCache</td><td>L3 的 <code>host:port</code></td></tr>
+    <tr><td><code>use_pin_memory</code></td><td>LMCache</td><td>L1 是否用页锁定内存（强烈建议开）</td></tr>
+    <tr><td><code>use_hugepage</code> / <code>numa_mode</code></td><td>LMCache</td><td>大页与 NUMA 亲和调优</td></tr>
+    <tr><td><code>enable_async_loading</code></td><td>LMCache</td><td>「先查后取」两段式决策</td></tr>
+    <tr><td><code>enable_layerwise</code></td><td>LMCache</td><td>逐层搬运与计算重叠</td></tr>
+    <tr><td><code>enable_blending</code></td><td>LMCache</td><td>CPU 侧模糊前缀匹配</td></tr>
+    <tr><td><code>enable_p2p</code> / <code>peer_init_url</code></td><td>LMCache</td><td>实例间直连传输</td></tr>
+    <tr><td><code>enable_metrics</code></td><td>LMCache</td><td>指标输出（调优第一步）</td></tr>
+    <tr><td><code>LMCACHE_CONFIG_FILE</code></td><td>环境变量</td><td>指向 YAML 配置</td></tr>
+    <tr><td><code>LMCACHE_USE_EXPERIMENTAL</code></td><td>环境变量</td><td>启用新版适配路径</td></tr>
+    <tr><td><code>VLLM_USE_V1</code></td><td>环境变量</td><td>v0/v1 引擎选择</td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">9.6</span>术语表</h2>
+<table class="tbl">
+  <thead><tr><th>术语</th><th>一句话解释</th></tr></thead>
+  <tbody>
+    <tr><td>KV Cache</td><td>每层 Transformer 缓存的 Key/Value 张量，Decode 阶段必须常驻显存</td></tr>
+    <tr><td>Prefill / Decode</td><td>前者一次性算整个 prompt（算力瓶颈），后者逐 token 生成（带宽瓶颈）</td></tr>
+    <tr><td>PagedAttention / block / page</td><td>把 KV 切成固定块管理显存，使 KV 可寻址、可搬运</td></tr>
+    <tr><td>chunk_size</td><td>LMCache 的缓存与哈希粒度，要能被 block_size 整除</td></tr>
+    <tr><td>APC（自动前缀缓存）</td><td>vLLM 内建的相同前缀复用能力，范围仅限单实例显存</td></tr>
+    <tr><td>L1 / L2 / L3</td><td>社区对 KV 存储层级的叫法：显存+主机内存 / 本地盘 / 远端</td></tr>
+    <tr><td>pinned memory</td><td>页锁定主机内存，可被 DMA / RDMA 直接访问</td></tr>
+    <tr><td>DMA</td><td>不经过 CPU 的外设直接内存访问，拷贝大块数据的基本方式</td></tr>
+    <tr><td>CUDA IPC</td><td>同机跨进程共享显存的机制，靠一个小句柄传递</td></tr>
+    <tr><td>SHM</td><td>共享内存：同一物理页映射进多个进程，零拷贝</td></tr>
+    <tr><td>Pickle</td><td>Python 对象序列化协议，负责结构与元数据，必然复制</td></tr>
+    <tr><td>layerwise</td><td>逐层搬运 KV 并与计算重叠，消除串行等待</td></tr>
+    <tr><td>KV Connector</td><td>vLLM 中「把 KV 搬到外部/从外部搬回」的抽象接口</td></tr>
+    <tr><td>kv_role</td><td>连接器角色：producer（只存）/ consumer（只取）/ both（双向）</td></tr>
+    <tr><td>EngineCore</td><td>vLLM v1 的引擎核心进程，调度侧连接器跑在这里</td></tr>
+    <tr><td>NIXL</td><td>NVIDIA 的传输抽象层，用于跨实例/跨机 KV 传输</td></tr>
+    <tr><td>HCCL / HCCS</td><td>昇腾的集合通信库 / 多卡高速互联</td></tr>
+    <tr><td>PrivateUse1</td><td>PyTorch 允许第三方注册新设备后端的机制，torch_npu 用它接入</td></tr>
+    <tr><td>ascendcl / aclrt*</td><td>CANN 的 Runtime API，对标 CUDA Runtime</td></tr>
+    <tr><td>运行期 patch</td><td>LMCache-Ascend 通过替换符号来适配 NPU 的手段</td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">9.7</span>外部链接（自查入口）</h2>
+<div class="card">
+  <ul>
+    <li>LMCache 主仓库：<a href="https://github.com/LMCache/LMCache">github.com/LMCache/LMCache</a> —— 建议看 <code>lmcache/v1/</code> 与 <code>lmcache/integration/vllm/</code></li>
+    <li>LMCache-Ascend：<a href="https://github.com/LMCache/LMCache-Ascend">github.com/LMCache/LMCache-Ascend</a> —— 第 4 章主要依据其 README</li>
+    <li>多硬件架构设计文档：<a href="https://github.com/LMCache/LMCache/blob/dev/docs/design/ARCHITECTURE_MULTI_HARDWARE.md">docs/design/ARCHITECTURE_MULTI_HARDWARE.md</a></li>
+    <li>vLLM 的 LMCache 集成适配器：<a href="https://github.com/vllm-project/vllm/blob/main/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_integration/vllm_v1_adapter.py">vllm/…/lmcache_integration/vllm_v1_adapter.py</a></li>
+    <li>vLLM 连接器接口文档（0.14 版 API 页）：<a href="https://docs.vllm.ai/en/v0.14.0/api/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_connector/">vllm.distributed.kv_transfer.kv_connector.v1.lmcache_connector</a></li>
+    <li>vLLM 官方论坛关于 LMCache server 的讨论：<a href="https://discuss.vllm.ai/t/vllm-lmcache-server-how-to-run/2843/7">vLLM Forums</a></li>
+    <li>vLLM-Ascend 的 LMCache-Ascend 部署指南：<a href="https://docs.vllm.ai/projects/ascend/en/main/user_guide/feature_guide/lmcache_ascend_deployment.html">docs.vllm.ai/projects/ascend（英文）</a> / <a href="https://docs.vllm.ai/projects/ascend/zh-cn/main/user_guide/feature_guide/lmcache_ascend_deployment.html">中文版</a></li>
+    <li>官方博客《LMCache × 昇腾：基于昇腾 NPU 加速大语言模型推理》：<a href="https://blog.lmcache.ai/zh/2025/11/04/lmcache-x-%E6%98%87%E8%85%BE%EF%BC%9A%E5%9F%BA%E4%BA%8E%E6%98%87%E8%85%BEnpu%E5%8A%A0%E9%80%9F%E5%A4%A7%E8%AF%AD%E8%A8%80%E6%A8%A1%E5%9E%8B%E6%8E%A8%E7%90%86/">blog.lmcache.ai</a></li>
+    <li>LMCache 官方文档站：<a href="https://docs.lmcache.ai/">docs.lmcache.ai</a>（含 <code>mp/</code> 多进程模式与 <code>kv_cache/</code> 优化章节）</li>
+    <li>昇腾《内存共享（IPC）》文档：<a href="https://www.hiascend.com/document/detail/zh/Pytorch/720/ptmoddevg/Frameworkfeatures/featuresguide_00031.html">hiascend.com（CANN/torch_npu）</a></li>
+    <li>LMCache-Ascend 的一个相关 issue（Mooncake ascend direct transport + local_cpu）：<a href="https://github.com/LMCache/LMCache-Ascend/issues/145">issue #145</a></li>
+    <li>vllm-ascend 的 <code>NPUIPCWeightTransferEngine</code> 提交（看 NPU IPC 在 vLLM 侧怎么用）：<a href="https://github.com/vllm-project/vllm-ascend/commit/6d428b6f9da98ded43837d60a04b95668eb9106e">commit 6d428b6</a></li>
+  </ul>
+</div>
+
+<h2><span class="num">9.8</span>建议的动手验证清单</h2>
+<ol>
+  <li><strong>跑通最小例子</strong>：单卡 + <code>local_cpu</code> only，确认同一个长 prompt 第二次请求 TTFT 明显下降。</li>
+  <li><strong>确认命中粒度</strong>：把 <code>chunk_size</code> 改成 128 / 256 / 512，观察日志里的命中 token 数变化。</li>
+  <li><strong>验证 pin memory 的收益</strong>：<code>use_pin_memory: true/false</code> 各跑一次，对比拷贝耗时。</li>
+  <li><strong>验证 layerwise</strong>：开/关 <code>enable_layerwise</code>，对比 TTFT 与 GPU 利用率曲线。</li>
+  <li><strong>加 L2</strong>：配置 <code>local_disk</code>，重启进程后看是否仍能命中。</li>
+  <li><strong>加 L3</strong>：起一个 LMCache server，两个实例共享它，验证跨实例复用。</li>
+  <li><strong>读源码</strong>：按 <a href="99-reference.html">9.2 / 9.3 的两张表</a>，把 <code>start_load_kv</code> → <code>retrieve</code> → <code>to_gpu</code> 这条链读一遍。</li>
+  <li><strong>画自己的图</strong>：用第 7 章的七层结构，把你实际的机器拓扑（卡数、互联、网卡）标注上去。</li>
+</ol>
+
+<div class="pager">
+  <a href="07-npu-ipc-stack.html">← 上一章：NPU/CUDA IPC 层级</a>
+  <a class="next" href="index.html">回到目录 →</a>
+</div>
+
+<footer>
+  LMCache 图解讲义 · 共 8 章 · 纯静态 HTML（<code>style.css</code> + 8 个页面），可离线阅读、可直接分享。<br>
+  代码路径以 LMCache <code>dev</code> 分支与 vLLM <code>main</code> 分支为参考；LMCache-Ascend 部分请以实际安装版本为准。
+</footer>
+</main>
+</body>
+</html>

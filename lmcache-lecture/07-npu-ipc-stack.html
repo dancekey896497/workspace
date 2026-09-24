@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>07 IPC 的层级：从驱动到应用 · LMCache 图解讲义</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">⚡ LMCache 图解讲义</span>
+  <nav>
+    <a href="index.html">目录</a>
+    <a href="01-basics.html">基础概念</a>
+    <a href="02-components.html">组件组成</a>
+    <a href="03-dataflow.html">数据流</a>
+    <a href="04-lmcache-ascend.html">LMCache-Ascend</a>
+    <a href="05-ipc-shm-pickle.html">IPC / SHM / Pickle</a>
+    <a href="06-vllm-connector.html">vLLM 集成</a>
+    <a href="07-npu-ipc-stack.html" class="active">NPU/CUDA IPC 层级</a>
+    <a href="99-reference.html">代码索引</a>
+  </nav>
+</header>
+
+<main class="wrap">
+<h1>07 · IPC 从底层到上层：CUDA 与 torch-npu 逐层对照</h1>
+<p class="lead">你问的「torch-npu 的 IPC 在什么层级」——答案是：<strong>它是一个横跨「驱动 / Runtime / PyTorch」三层的机制</strong>，不是一个单独的 API。这一章把整条栈拆开，一层层对照。</p>
+
+<h2><span class="num">7.1</span>整条栈：7 层结构</h2>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 720" role="img" aria-label="CUDA 与 Ascend IPC 栈逐层对照">
+  <!-- 表头 -->
+  <rect x="360" y="16" width="300" height="34" rx="6" fill="#1b1417" stroke="#f97362"/>
+  <text class="ttl" x="470" y="39" fill="#f97362">NVIDIA / CUDA</text>
+  <rect x="672" y="16" width="304" height="34" rx="6" fill="#171420" stroke="#a78bfa"/>
+  <text class="ttl" x="782" y="39" fill="#a78bfa">华为昇腾 / torch-npu</text>
+
+  <!-- L7 -->
+  <rect x="16" y="60" width="332" height="86" rx="8" fill="#121a16" stroke="#7dd3a0"/>
+  <text class="lbl" x="32" y="82" fill="#7dd3a0">L7 · 应用层</text>
+  <text class="lbl2" x="32" y="102">谁在用 IPC？</text>
+  <text class="lbl2" x="32" y="122">vLLM 多进程传张量、权重传输（WeightTransfer）</text>
+  <text class="lbl2" x="32" y="140">LMCache 多进程模式共享缓冲区</text>
+
+  <rect x="360" y="60" width="300" height="86" rx="8" fill="#1b1417" stroke="#3a4757"/>
+  <text class="mono" x="374" y="82">vllm.distributed / vllm.worker</text>
+  <text class="mono" x="374" y="102">NPUIPCWeightTransferEngine</text>
+  <text class="lbl2" x="374" y="122">（vllm-ascend 里的权重传输后端）</text>
+  <text class="lbl2" x="374" y="140">Muon / 权重热更新场景</text>
+
+  <rect x="672" y="60" width="304" height="86" rx="8" fill="#171420" stroke="#3a4757"/>
+  <text class="mono" x="686" y="82">vllm-ascend 的对应实现</text>
+  <text class="mono" x="686" y="102">LMCache-Ascend 的连接器</text>
+  <text class="lbl2" x="686" y="122">接口名与 GPU 侧一致</text>
+  <text class="lbl2" x="686" y="140">只是底层换了实现</text>
+
+  <!-- L6 -->
+  <rect x="16" y="154" width="332" height="86" rx="8" fill="#141c26" stroke="#5ac8fa"/>
+  <text class="lbl" x="32" y="176" fill="#5ac8fa">L6 · 分布式通信层</text>
+  <text class="lbl2" x="32" y="196">跨进程 / 跨卡 / 跨机</text>
+  <text class="lbl2" x="32" y="216">集合通信（AllReduce 等）</text>
+  <text class="lbl2" x="32" y="234">点对点 KV 传输（disagg）</text>
+
+  <rect x="360" y="154" width="300" height="86" rx="8" fill="#1b1417" stroke="#3a4757"/>
+  <text class="mono" x="374" y="176">NCCL / NIXL / ibverbs</text>
+  <text class="lbl2" x="374" y="196">NCCL：集合通信</text>
+  <text class="lbl2" x="374" y="216">NIXL：传输抽象（RDMA/GDS）</text>
+  <text class="lbl2" x="374" y="234">GPUDirect RDMA 让网卡直读显存</text>
+
+  <rect x="672" y="154" width="304" height="86" rx="8" fill="#171420" stroke="#3a4757"/>
+  <text class="mono" x="686" y="176">HCCL（集合通信）</text>
+  <text class="lbl2" x="686" y="196">昇腾 RDMA 网卡 + 自研传输</text>
+  <text class="lbl2" x="686" y="216">Mooncake 的 Ascend transport</text>
+  <text class="lbl2" x="686" y="234">点对点路径与 GPU 侧不完全对应</text>
+
+  <!-- L5 -->
+  <rect x="16" y="248" width="332" height="100" rx="8" fill="#141c26" stroke="#5ac8fa"/>
+  <text class="lbl" x="32" y="270" fill="#5ac8fa">L5 · PyTorch 张量层</text>
+  <text class="lbl2" x="32" y="290">张量/存储的跨进程共享</text>
+  <text class="lbl2" x="32" y="310">句柄传递、引用计数、生命周期</text>
+  <text class="lbl2" x="32" y="330">这一层是<tspan fill="#fff">跨平台统一</tspan>的：</text>
+  <text class="lbl2" x="32" y="348">同一套 API，背后分派到不同设备后端</text>
+
+  <rect x="360" y="248" width="300" height="100" rx="8" fill="#1b1417" stroke="#f97362"/>
+  <text class="mono" x="374" y="270">torch.UntypedStorage</text>
+  <text class="mono" x="374" y="290">._share_cuda_()</text>
+  <text class="mono" x="374" y="310">._new_shared_cuda(...)</text>
+  <text class="lbl2" x="374" y="332">内部 → cudaIpcGetMemHandle /</text>
+  <text class="lbl2" x="374" y="348">cudaIpcOpenMemHandle</text>
+
+  <rect x="672" y="248" width="304" height="100" rx="8" fill="#171420" stroke="#a78bfa"/>
+  <text class="mono" x="686" y="270">torch_npu 注册的 PrivateUse1 后端</text>
+  <text class="lbl2" x="686" y="290">PyTorch 的存储/共享接口被</text>
+  <text class="lbl2" x="686" y="310">torch_npu 用<tspan fill="#fff">设备侧实现</tspan>填充</text>
+  <text class="lbl2" x="686" y="332">对外 API 尽量与 CUDA 保持同名</text>
+  <text class="lbl2" x="686" y="348">所以上层代码基本不用改</text>
+
+  <!-- L4 -->
+  <rect x="16" y="356" width="332" height="100" rx="8" fill="#141c26" stroke="#5ac8fa"/>
+  <text class="lbl" x="32" y="378" fill="#5ac8fa">L4 · 设备 Runtime 层</text>
+  <text class="lbl2" x="32" y="398">内存分配、拷贝、流、事件</text>
+  <text class="lbl2" x="32" y="418">IPC 句柄的获取与打开<tspan fill="#ff9ecb">就在这里</tspan></text>
+  <text class="lbl2" x="32" y="438">这是「IPC 的正式定义层」</text>
+
+  <rect x="360" y="356" width="300" height="100" rx="8" fill="#1b1417" stroke="#f97362"/>
+  <text class="mono" x="374" y="378">CUDA Runtime API</text>
+  <text class="mono" x="374" y="398">cudaMalloc / cudaMemcpyAsync</text>
+  <text class="mono" x="374" y="418">cudaIpcGetMemHandle</text>
+  <text class="mono" x="374" y="438">cudaIpcOpenMemHandle / cudaHostAlloc</text>
+
+  <rect x="672" y="356" width="304" height="100" rx="8" fill="#171420" stroke="#a78bfa"/>
+  <text class="mono" x="686" y="378">CANN Runtime（ascendcl）</text>
+  <text class="mono" x="686" y="398">aclrtMalloc / aclrtMemcpyAsync</text>
+  <text class="mono" x="686" y="418">aclrtIpcMemGetExportKey / ImportKey</text>
+  <text class="mono" x="686" y="438">aclrtIpcMemOpen / Close / aclrtIpcMemSetImportPid</text>
+
+  <!-- L3 -->
+  <rect x="16" y="464" width="332" height="86" rx="8" fill="#141c26" stroke="#5ac8fa"/>
+  <text class="lbl" x="32" y="486" fill="#5ac8fa">L3 · 设备驱动层</text>
+  <text class="lbl2" x="32" y="506">内核态驱动</text>
+  <text class="lbl2" x="32" y="526">内存映射、页表、点对点访问</text>
+  <text class="lbl2" x="32" y="544">IOMMU / 隔离检查在这里</text>
+
+  <rect x="360" y="464" width="300" height="86" rx="8" fill="#1b1417" stroke="#3a4757"/>
+  <text class="mono" x="374" y="486">NVIDIA Kernel Driver（nvidia.ko）</text>
+  <text class="mono" x="374" y="506">libcuda.so（驱动 API）</text>
+  <text class="lbl2" x="374" y="526">IPC 句柄里编码了设备 UUID 与分配标识</text>
+  <text class="lbl2" x="374" y="544">跨机不可能正是这一层的限制</text>
+
+  <rect x="672" y="464" width="304" height="86" rx="8" fill="#171420" stroke="#3a4757"/>
+  <text class="mono" x="686" y="486">昇腾驱动（davinci / ascend 系列）</text>
+  <text class="lbl2" x="686" y="506">导出 key 里包含设备信息</text>
+  <text class="lbl2" x="686" y="526">导入前需要约定 PID（SetImportPid）</text>
+  <text class="lbl2" x="686" y="544">这是比 CUDA 多出来的一步权限校验</text>
+
+  <!-- L2 -->
+  <rect x="16" y="558" width="332" height="72" rx="8" fill="#241c14" stroke="#f2c14e"/>
+  <text class="lbl" x="32" y="580" fill="#f2c14e">L2 · 硬件互联</text>
+  <text class="lbl2" x="32" y="600">设备之间、设备与网卡之间怎么连</text>
+  <text class="lbl2" x="32" y="620">决定了「跨卡共享」是否可行、多快</text>
+
+  <rect x="360" y="558" width="300" height="72" rx="8" fill="#1b1417" stroke="#3a4757"/>
+  <text class="lbl2" x="374" y="580">PCIe / NVLink / NVLink-C2C</text>
+  <text class="lbl2" x="374" y="600">P2P（Peer Access）能力</text>
+  <text class="lbl2" x="374" y="620">GPUDirect RDMA（网卡直读显存）</text>
+
+  <rect x="672" y="558" width="304" height="72" rx="8" fill="#171420" stroke="#3a4757"/>
+  <text class="lbl2" x="686" y="580">PCIe / HCCS（昇腾互连）</text>
+  <text class="lbl2" x="686" y="600">HCCS 是昇腾的多卡高速互联</text>
+  <text class="lbl2" x="686" y="620">跨机走 RDMA 网卡（如 1822/1825 系列）</text>
+
+  <!-- L1 -->
+  <rect x="16" y="638" width="960" height="62" rx="8" fill="#1b1417" stroke="#f97362"/>
+  <text class="lbl" x="32" y="660" fill="#f97362">L1 · 设备内存本体</text>
+  <text class="lbl2" x="32" y="682">NVIDIA HBM（A100/H100/H20…）  ·  昇腾 HBM（910B/910C 等）  ——  IPC 最终要共享的就是这一层里的字节</text>
+
+  <!-- 箭头：IPC 贯穿 L3-L5 -->
+  <path d="M348,406 L358,406" stroke="#ff9ecb" stroke-width="2"/>
+  <path d="M662,406 L670,406" stroke="#ff9ecb" stroke-width="2"/>
+  <text class="lbl2" x="352" y="700" transform="translate(0,0)"></text>
+</svg>
+<figcaption><b>图 7-1</b> 七层对照表。<b>IPC 的定义在 L4（Runtime），它的可行性由 L2/L3（互联与驱动）决定，它的易用性由 L5（PyTorch）提供。</b>torch-npu 的作用是在 L5 提供与 CUDA 同名的接口，在 L4 调用 CANN 的 IPC API。</figcaption>
+</figure>
+
+<div class="note warn">
+  <span class="t">关于 Ascend 侧 API 名称的说明</span>
+  CANN 的 IPC 系列 API（<code>aclrtIpcMemGetExportKey</code> / <code>aclrtIpcMemImportByKey</code> /
+  <code>aclrtIpcMemOpen</code> / <code>aclrtIpcMemClose</code> / <code>aclrtIpcMemSetImportPid</code>）是 CANN 提供的设备内存 IPC 接口，
+  与 CUDA 的 <code>cudaIpc*</code> 在设计意图上一一对应，但<strong>参数与语义细节不完全相同</strong>（例如多了 PID 约定）。
+  <span class="tag acc">需在机器上核实</span>具体签名请查你所用 CANN 版本的《应用开发指南》与 torch_npu 文档。
+</div>
+
+<h2><span class="num">7.2</span>PyTorch 是怎么把两套设备「统一」起来的</h2>
+
+<p>PyTorch 从 1.8 起引入了 <strong>PrivateUse1</strong> 机制：允许第三方把一套新的设备后端注册进 PyTorch，复用它的张量、调度器、缓存分配器等基础设施。<code>torch_npu</code> 就是通过这个机制接入的。</p>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 400" role="img" aria-label="PyTorch 设备后端注册机制">
+  <defs>
+    <marker id="pt1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#7ce0d3"/></marker>
+  </defs>
+
+  <!-- 上：统一层 -->
+  <rect x="24" y="20" width="952" height="106" rx="9" fill="#141c26" stroke="#5ac8fa" stroke-width="1.8"/>
+  <text class="ttl" x="40" y="44" fill="#5ac8fa">PyTorch 统一层（设备无关的 API）</text>
+  <rect x="40" y="54" width="228" height="60" rx="7" fill="#182933" stroke="#3a4757"/>
+  <text class="mono" x="52" y="76">torch.Tensor / Storage</text>
+  <text class="lbl2" x="52" y="96">.to(device) / .copy_()</text>
+  <rect x="276" y="54" width="228" height="60" rx="7" fill="#182933" stroke="#3a4757"/>
+  <text class="mono" x="288" y="76">torch.multiprocessing</text>
+  <text class="lbl2" x="288" y="96">跨进程传递张量</text>
+  <rect x="512" y="54" width="228" height="60" rx="7" fill="#182933" stroke="#3a4757"/>
+  <text class="mono" x="524" y="76">torch.Stream / Event</text>
+  <text class="lbl2" x="524" y="96">流与同步（设备无关接口）</text>
+  <rect x="748" y="54" width="210" height="60" rx="7" fill="#182933" stroke="#3a4757"/>
+  <text class="mono" x="760" y="76">CachingAllocator</text>
+  <text class="lbl2" x="760" y="96">显存池管理框架</text>
+
+  <path d="M500,126 L500,152" stroke="#7ce0d3" stroke-width="1.8" marker-end="url(#pt1)"/>
+  <text class="lbl2" x="510" y="146">按 device type 分派</text>
+
+  <!-- 下面两列 -->
+  <rect x="24" y="158" width="470" height="228" rx="9" fill="#1b1417" stroke="#f97362" stroke-width="1.7"/>
+  <text class="ttl" x="40" y="182" fill="#f97362">device type = "cuda"（aten::cuda 后端）</text>
+  <rect x="40" y="194" width="438" height="46" rx="7" fill="#241a1d" stroke="#3a4757"/>
+  <text class="mono" x="52" y="214">c10::cuda::CUDACachingAllocator</text>
+  <text class="lbl2" x="52" y="232">cudaMalloc / cudaFree 之上做池化</text>
+  <rect x="40" y="248" width="438" height="46" rx="7" fill="#241a1d" stroke="#3a4757"/>
+  <text class="mono" x="52" y="268">Storage._share_cuda_()</text>
+  <text class="lbl2" x="52" y="286">→ cudaIpcGetMemHandle</text>
+  <rect x="40" y="302" width="438" height="72" rx="7" fill="#241a1d" stroke="#3a4757"/>
+  <text class="mono" x="52" y="322">torch.cuda.Stream / Event</text>
+  <text class="lbl2" x="52" y="342">IPC 的句柄通过 torch.multiprocessing 传递：</text>
+  <text class="lbl2" x="52" y="362">spawn 模式下必须显式传（不能靠继承）</text>
+
+  <rect x="506" y="158" width="470" height="228" rx="9" fill="#171420" stroke="#a78bfa" stroke-width="1.7"/>
+  <text class="ttl" x="522" y="182" fill="#a78bfa">device type = "npu"（PrivateUse1 后端）</text>
+  <rect x="522" y="194" width="438" height="46" rx="7" fill="#1d1826" stroke="#3a4757"/>
+  <text class="mono" x="534" y="214">torch_npu 注册的自定义分配器</text>
+  <text class="lbl2" x="534" y="232">底层是 CANN 的内存管理（含显存池）</text>
+  <rect x="522" y="248" width="438" height="46" rx="7" fill="#1d1826" stroke="#3a4757"/>
+  <text class="mono" x="534" y="268">torch_npu 的 storage 共享实现</text>
+  <text class="lbl2" x="534" y="286">→ CANN 的 IPC 接口（导出 key / 导入 key）</text>
+  <rect x="522" y="302" width="438" height="72" rx="7" fill="#1d1826" stroke="#3a4757"/>
+  <text class="mono" x="534" y="322">torch.npu.Stream / Event</text>
+  <text class="lbl2" x="534" y="342">「内存共享（IPC）」是 torch_npu 文档里的独立章节，</text>
+  <text class="lbl2" x="534" y="362">说明它是<tspan fill="#fff">在 PyTorch 接口层实现的设备能力</tspan>，而非 CANN 独有概念</text>
+</svg>
+<figcaption><b>图 7-2</b> PyTorch 的设备分派。<b>torch-npu 的 IPC 层级 = L5（PyTorch 存储/张量接口）+ L4（调用 CANN IPC API）</b>。它不是一个新概念，而是「同一接口的昇腾实现」。</figcaption>
+</figure>
+
+<h2><span class="num">7.3</span>一次「跨进程共享显存」在上面的栈里如何逐层下落</h2>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 560" role="img" aria-label="跨进程共享显存的逐层下落">
+  <defs>
+    <marker id="st1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#7ce0d3"/></marker>
+  </defs>
+
+  <!-- 1 -->
+  <rect x="24" y="20" width="952" height="66" rx="8" fill="#121a16" stroke="#7dd3a0"/>
+  <text class="lbl" x="40" y="42" fill="#7dd3a0">① 应用代码（vLLM / LMCache / 你的脚本）</text>
+  <text class="mono" x="40" y="64">producer: tensor = torch.empty(..., device="npu"); handle_info = tensor.untyped_storage()._share_...</text>
+  <text class="mono" x="40" y="80">consumer: storage = torch.UntypedStorage._new_shared_...(handle_info)</text>
+
+  <path d="M500,86 L500,106" stroke="#7ce0d3" stroke-width="1.6" marker-end="url(#st1)"/>
+
+  <!-- 2 -->
+  <rect x="24" y="110" width="952" height="72" rx="8" fill="#141c26" stroke="#5ac8fa"/>
+  <text class="lbl" x="40" y="132" fill="#5ac8fa">② PyTorch 存储层：把「共享」翻译成设备 API 调用 + 引用计数</text>
+  <text class="lbl2" x="40" y="152">· 检查设备一致性、记录「这个 storage 被共享了」（防止提前释放）</text>
+  <text class="lbl2" x="40" y="172">· CUDA: cudaIpcGetMemHandle / NPU: CANN 的导出接口</text>
+
+  <path d="M500,182 L500,202" stroke="#7ce0d3" stroke-width="1.6" marker-end="url(#st1)"/>
+
+  <!-- 3 -->
+  <rect x="24" y="206" width="952" height="72" rx="8" fill="#141c26" stroke="#ff9ecb"/>
+  <text class="lbl" x="40" y="228" fill="#ff9ecb">③ 句柄传递（这一步与 IPC 无关，是普通的进程间通信）</text>
+  <text class="lbl2" x="40" y="248">handle 是一小段字节 → 用 multiprocessing 队列 / socket / SHM / ZMQ 送过去都行</text>
+  <text class="lbl2" x="40" y="268">CUDA 侧：fork 可继承；spawn 必须显式传。NPU 侧同理，但要注意进程与设备的绑定关系</text>
+
+  <path d="M500,278 L500,298" stroke="#7ce0d3" stroke-width="1.6" marker-end="url(#st1)"/>
+
+  <!-- 4 -->
+  <rect x="24" y="302" width="952" height="72" rx="8" fill="#141c26" stroke="#f97362"/>
+  <text class="lbl" x="40" y="324" fill="#f97362">④ 设备 Runtime：打开句柄，得到本进程可用的设备指针</text>
+  <text class="mono" x="40" y="346">CUDA: cudaIpcOpenMemHandle(&amp;ptr, handle, cudaIpcMemLazyEnablePeerAccess)</text>
+  <text class="mono" x="40" y="366">CANN: 导入 key（含 PID 约定）→ 打开 → 得到设备地址</text>
+
+  <path d="M500,374 L500,394" stroke="#7ce0d3" stroke-width="1.6" marker-end="url(#st1)"/>
+
+  <!-- 5 -->
+  <rect x="24" y="398" width="952" height="72" rx="8" fill="#241c14" stroke="#f2c14e"/>
+  <text class="lbl" x="40" y="420" fill="#f2c14e">⑤ 内核驱动：把对方设备的物理内存映射进本进程的地址空间</text>
+  <text class="lbl2" x="40" y="440">这里做设备身份校验、权限校验、页表建立</text>
+  <text class="lbl2" x="40" y="460">跨机失败的原因就在这一层：设备页表无法跨主机</text>
+
+  <path d="M500,470 L500,490" stroke="#7ce0d3" stroke-width="1.6" marker-end="url(#st1)"/>
+
+  <!-- 6 -->
+  <rect x="24" y="494" width="952" height="56" rx="8" fill="#1b1417" stroke="#f97362"/>
+  <text class="lbl" x="40" y="516" fill="#f97362">⑥ 硬件互联：实际的数据通路</text>
+  <text class="lbl2" x="40" y="538">同卡：直接访问本地 HBM；跨卡：PCIe / NVLink / HCCS；跨机：不可能走 IPC，只能走网络</text>
+</svg>
+<figcaption><b>图 7-3</b> 逐层下落。每一层都可能失败，且失败信息往往来自最底层（驱动）。<b>排查 IPC 问题的顺序：先看设备号/PID 是否一致（L4/L3），再看传递通道是否通（L6），最后才怀疑应用代码。</b></figcaption>
+</figure>
+
+<h2><span class="num">7.4</span>「拷贝」在栈里的位置：DMA 到底是谁在干活</h2>
+
+<p>理解「谁在搬字节」，是理解性能的关键。下面这张图回答：<code>tensor.to("npu")</code> 或 LMCache 的 <code>from_gpu</code> 到底触发了什么。</p>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 460" role="img" aria-label="DMA 拷贝路径">
+  <defs>
+    <marker id="dm1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#f2c14e"/></marker>
+  </defs>
+
+  <!-- 路径 A -->
+  <text class="ttl" x="24" y="30" fill="#7dd3a0">路径 A · 目标内存已 pin：DMA 直接搬运（快）</text>
+  <rect x="40" y="46" width="180" height="60" rx="8" fill="#1b1417" stroke="#f97362"/>
+  <text class="lbl2" x="56" y="70">设备 HBM</text>
+  <text class="lbl2" x="56" y="90">显存里的 KV</text>
+
+  <path d="M224,76 L316,76" stroke="#f2c14e" stroke-width="2.4" marker-end="url(#dm1)"/>
+  <text class="lbl2" x="228" y="66">DMA 引擎</text>
+  <text class="lbl2" x="228" y="96">CPU 不参与</text>
+
+  <rect x="320" y="46" width="200" height="60" rx="8" fill="#241c14" stroke="#f2c14e"/>
+  <text class="lbl2" x="336" y="70">pinned 主机内存</text>
+  <text class="lbl2" x="336" y="90">LMCache 的 L1 缓冲</text>
+
+  <rect x="556" y="46" width="420" height="60" rx="8" fill="#121a16" stroke="#7dd3a0"/>
+  <text class="lbl2" x="572" y="70">对：整条路径只有一次总线传输，带宽可以接近 PCIe/HCCS 上限</text>
+  <text class="lbl2" x="572" y="90">Pinned 的物理意义：这些页被锁定，设备可以直接对它发起 DMA</text>
+
+  <!-- 路径 B -->
+  <text class="ttl" x="24" y="152" fill="#f97362">路径 B · 目标内存未 pin：多一次 CPU 拷贝（慢）</text>
+  <rect x="40" y="168" width="180" height="60" rx="8" fill="#1b1417" stroke="#f97362"/>
+  <text class="lbl2" x="56" y="192">设备 HBM</text>
+  <text class="lbl2" x="56" y="212">显存里的 KV</text>
+
+  <path d="M224,198 L316,198" stroke="#f2c14e" stroke-width="2.4" marker-end="url(#dm1)"/>
+  <text class="lbl2" x="228" y="188">DMA</text>
+
+  <rect x="320" y="168" width="200" height="60" rx="8" fill="#20181b" stroke="#f2c14e" stroke-dasharray="4 3"/>
+  <text class="lbl2" x="336" y="192">临时 pinned 暂存区</text>
+  <text class="lbl2" x="336" y="212">（驱动或 runtime 内部）</text>
+
+  <path d="M524,198 L616,198" stroke="#ff6b6b" stroke-width="2.4" marker-end="url(#dm1)"/>
+  <text class="lbl2" x="528" y="188">memcpy</text>
+  <text class="lbl2" x="528" y="218">CPU 参与！</text>
+
+  <rect x="620" y="168" width="180" height="60" rx="8" fill="#241c14" stroke="#f2c14e"/>
+  <text class="lbl2" x="636" y="192">普通主机内存</text>
+  <text class="lbl2" x="636" y="212">（可被换出）</text>
+
+  <rect x="816" y="168" width="160" height="60" rx="8" fill="#1b1417" stroke="#ff6b6b"/>
+  <text class="lbl2" x="830" y="192">带宽腰斩、</text>
+  <text class="lbl2" x="830" y="212">CPU 占用上升</text>
+
+  <!-- 三条横向对比 -->
+  <text class="ttl" x="24" y="278">不同「介质组合」的拷贝代价（数量级示意）</text>
+  <rect x="40" y="292" width="912" height="42" rx="7" fill="#182933" stroke="#3a4757"/>
+  <text class="lbl2" x="56" y="318">HBM ↔ pinned DRAM：走 DMA，PCIe Gen4/5 或 HCCS，常见 20~60 GB/s（受总线与拓扑限制）</text>
+  <rect x="40" y="342" width="912" height="42" rx="7" fill="#182933" stroke="#3a4757"/>
+  <text class="lbl2" x="56" y="368">HBM ↔ 普通 DRAM：多一次 CPU 参与，实测带宽通常显著低于理论值，且占 CPU</text>
+  <rect x="40" y="392" width="912" height="56" rx="7" fill="#1b1417" stroke="#ff9ecb"/>
+  <text class="lbl2" x="56" y="416">HBM ↔ 远端：不可能用 IPC。必须 pinned DRAM 作为中转，再由网卡 DMA 出去；</text>
+  <text class="lbl2" x="56" y="436">GPU 侧有 GPUDirect RDMA 可以让网卡直读显存，昇腾侧对应能力需按具体网卡与版本确认。</text>
+</svg>
+<figcaption><b>图 7-4</b> 为什么 LMCache 坚持用 pin memory：它把「两次总线传输 + 一次 CPU 拷贝」压缩成「一次 DMA」。这就是 <code>use_pin_memory</code> 这个开关的全部意义。</figcaption>
+</figure>
+
+<h2><span class="num">7.5</span>CUDA 与 NPU 的能力对照速查</h2>
+<table class="tbl">
+  <thead><tr><th>能力</th><th>CUDA 侧</th><th>NPU（昇腾）侧</th><th>对 LMCache 的影响</th></tr></thead>
+  <tbody>
+    <tr><td>设备内存分配</td><td><code>cudaMalloc</code> / caching allocator</td><td><code>aclrtMalloc</code> / CANN 分配器</td><td>无影响，抽象在 PyTorch 层</td></tr>
+    <tr><td>主机页锁定内存</td><td><code>cudaHostAlloc</code></td><td>torch_npu 的 pin memory 支持</td><td><strong>直接影响 L1 拷贝带宽</strong>，第 4 章坑 1</td></tr>
+    <tr><td>D2H / H2D 拷贝</td><td><code>cudaMemcpyAsync</code></td><td><code>aclrtMemcpyAsync</code></td><td>LMCache 的搬运原语</td></tr>
+    <tr><td>流 / 事件</td><td><code>cudaStream_t</code> / <code>cudaEvent_t</code></td><td><code>aclrtStream</code> / <code>aclrtEvent</code></td><td>layerwise 重叠的基础</td></tr>
+    <tr><td>设备内存 IPC</td><td><code>cudaIpcGetMemHandle</code> / <code>Open</code> / <code>Close</code></td><td>CANN 的 IPC 导出/导入 key + open/close</td><td>多进程共享显存</td></tr>
+    <tr><td>跨卡 P2P 访问</td><td>Peer Access + NVLink/PCIe</td><td>HCCS + 对应能力</td><td>多进程/多卡共享是否可行</td></tr>
+    <tr><td>集合通信</td><td>NCCL</td><td>HCCL</td><td>TP 场景下的通信；与 LMCache 间接相关</td></tr>
+    <tr><td>点对点 KV 传输</td><td>NIXL / ibverbs / GPUDirect</td><td>昇腾 RDMA + 自研/Mooncake 传输</td><td>L3 远端层的实现差异</td></tr>
+    <tr><td>网卡直读显存</td><td>GPUDirect RDMA</td><td>需按网卡与软件版本确认</td><td>决定 L3 是否需要显存→主机中转</td></tr>
+  </tbody>
+</table>
+
+<div class="note tip">
+  <span class="t">「层级」问题的标准答案</span>
+  如果有人问你「torch-npu 的 IPC 在什么层级」，可以这样回答：<br>
+  <strong>它不是一个单独的层，而是三层协作的结果：</strong>
+  <ul>
+    <li><strong>L5（PyTorch 存储层）</strong>提供与 CUDA 同名的共享接口（<code>_share_*</code> / <code>_new_shared_*</code> / <code>share_memory_</code>），由 torch_npu 实现；</li>
+    <li><strong>L4（CANN Runtime）</strong>是 IPC 的真正定义层，提供设备内存的导出/导入 API；</li>
+    <li><strong>L3（昇腾驱动）</strong>决定可行性与权限（设备身份、PID 校验）。</li>
+  </ul>
+  越往下越「设备相关」，越往上越「跨平台统一」。
+</div>
+
+<h2><span class="num">7.6</span>按层排错：出问题该看哪一层</h2>
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 330" role="img" aria-label="按层排错表">
+  <text class="ttl" x="24" y="30">IPC 相关故障的层级定位</text>
+  <rect x="24" y="46" width="952" height="42" rx="6" fill="#182933" stroke="#3a4757"/>
+  <text class="lbl2" x="40" y="72">症状：另一个进程拿到的数据全是 0 / 乱码</text>
+  <text class="lbl2" x="500" y="72">→ 先查 L4：句柄是否配对成功；再查 L5 引用计数是否提前释放</text>
+
+  <rect x="24" y="94" width="952" height="42" rx="6" fill="#182933" stroke="#3a4757"/>
+  <text class="lbl2" x="40" y="120">症状：导入时报错「设备不匹配 / 非法句柄」</text>
+  <text class="lbl2" x="500" y="120">→ 查 L3/L4：设备号、PID 约定、导出的 key 是否过期</text>
+
+  <rect x="24" y="142" width="952" height="42" rx="6" fill="#182933" stroke="#3a4757"/>
+  <text class="lbl2" x="40" y="168">症状：跨卡共享可行但很慢</text>
+  <text class="lbl2" x="500" y="168">→ 查 L2：是否走了 P2P 通道（NVLink/HCCS）还是绕回主机内存</text>
+
+  <rect x="24" y="190" width="952" height="42" rx="6" fill="#182933" stroke="#3a4757"/>
+  <text class="lbl2" x="40" y="216">症状：拷贝带宽只有理论值一半</text>
+  <text class="lbl2" x="500" y="216">→ 查 L4 + 内存属性：目标内存是否 pin（决定 DMA 还是两次传输）</text>
+
+  <rect x="24" y="238" width="952" height="42" rx="6" fill="#182933" stroke="#3a4757"/>
+  <text class="lbl2" x="40" y="264">症状：偶发数值错误，不崩溃</text>
+  <text class="lbl2" x="500" y="264">→ 查 L4 的流/事件：同步点是否缺失（layerwise 高发）</text>
+
+  <rect x="24" y="286" width="952" height="34" rx="6" fill="#1b1417" stroke="#ff6b6b"/>
+  <text class="lbl2" x="40" y="308">原则：<tspan fill="#fff">错误信息通常来自最底层</tspan>，但根因经常在上面几层。别只盯着报错的那一行。</text>
+</svg>
+<figcaption><b>图 7-5</b> 按层排错。把「报错层」和「根因层」分开，是排查这类问题最有效的方法。</figcaption>
+</figure>
+
+<div class="pager">
+  <a href="06-vllm-connector.html">← 上一章：vLLM 集成</a>
+  <a class="next" href="99-reference.html">下一章：代码索引与术语表 →</a>
+</div>
+
+<footer>LMCache 图解讲义 · 07 IPC 层级</footer>
+</main>
+</body>
+</html>

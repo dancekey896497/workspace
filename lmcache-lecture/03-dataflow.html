@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>03 数据流 · LMCache 图解讲义</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">⚡ LMCache 图解讲义</span>
+  <nav>
+    <a href="index.html">目录</a>
+    <a href="01-basics.html">基础概念</a>
+    <a href="02-components.html">组件组成</a>
+    <a href="03-dataflow.html" class="active">数据流</a>
+    <a href="04-lmcache-ascend.html">LMCache-Ascend</a>
+    <a href="05-ipc-shm-pickle.html">IPC / SHM / Pickle</a>
+    <a href="06-vllm-connector.html">vLLM 集成</a>
+    <a href="07-npu-ipc-stack.html">NPU/CUDA IPC 层级</a>
+    <a href="99-reference.html">代码索引</a>
+  </nav>
+</header>
+
+<main class="wrap">
+<h1>03 · 数据流：存与取的全过程</h1>
+<p class="lead">这一章把第 2 章的组件连线变成「谁在什么时候调谁」。先看一次请求的完整生命周期，再分别放大读路径、写路径和 layerwise 时序。</p>
+
+<h2><span class="num">3.1</span>总览：一次请求的生命周期</h2>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 470" role="img" aria-label="请求生命周期时序图">
+  <defs>
+    <marker id="s1" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#5ac8fa"/></marker>
+    <marker id="s2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#7dd3a0"/></marker>
+    <marker id="s3" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#ffb86b"/></marker>
+  </defs>
+
+  <!-- lanes -->
+  <rect x="20" y="20" width="200" height="42" rx="7" fill="#241a1d" stroke="#f97362"/>
+  <text class="lbl" x="34" y="46">vLLM 调度器（driver 侧）</text>
+  <rect x="248" y="20" width="200" height="42" rx="7" fill="#241a1d" stroke="#f97362"/>
+  <text class="lbl" x="262" y="46">Worker / 模型执行进程</text>
+  <rect x="476" y="20" width="176" height="42" rx="7" fill="#141c26" stroke="#5ac8fa"/>
+  <text class="lbl" x="490" y="46">LMCache 引擎</text>
+  <rect x="680" y="20" width="150" height="42" rx="7" fill="#16201a" stroke="#7dd3a0"/>
+  <text class="lbl" x="694" y="46">L1/L2/L3 存储</text>
+  <rect x="858" y="20" width="122" height="42" rx="7" fill="#1b1417" stroke="#f97362"/>
+  <text class="lbl" x="872" y="46">设备显存</text>
+
+  <line x1="120" y1="62" x2="120" y2="440" stroke="#3a4757" stroke-dasharray="4 4"/>
+  <line x1="348" y1="62" x2="348" y2="440" stroke="#3a4757" stroke-dasharray="4 4"/>
+  <line x1="564" y1="62" x2="564" y2="440" stroke="#3a4757" stroke-dasharray="4 4"/>
+  <line x1="755" y1="62" x2="755" y2="440" stroke="#3a4757" stroke-dasharray="4 4"/>
+  <line x1="919" y1="62" x2="919" y2="440" stroke="#3a4757" stroke-dasharray="4 4"/>
+
+  <!-- phase 1 -->
+  <rect x="20" y="74" width="960" height="104" rx="7" fill="rgba(90,200,250,.05)" stroke="#2b3644" stroke-dasharray="4 4"/>
+  <text class="lbl2" x="30" y="90" fill="#5ac8fa">阶段 1 · 调度期：先问「能省多少」，不搬数据</text>
+
+  <path d="M120,104 L566,104" stroke="#5ac8fa" stroke-width="1.5" marker-end="url(#s1)"/>
+  <text class="mono" x="150" y="99">lookup(tokens) → 能命中的 token 数</text>
+
+  <path d="M564,140 L757,140" stroke="#7dd3a0" stroke-width="1.5" marker-end="url(#s2)"/>
+  <text class="mono" x="600" y="135">只查 key 是否存在（不读数据）</text>
+
+  <text class="mono" x="30" y="168">get_num_new_matched_tokens(...) → (num_hit, False)</text>
+
+  <!-- phase 2 -->
+  <rect x="20" y="188" width="960" height="88" rx="7" fill="rgba(125,211,160,.05)" stroke="#2b3644" stroke-dasharray="4 4"/>
+  <text class="lbl2" x="30" y="204" fill="#7dd3a0">阶段 2 · 起跑期：决定「少算多少」，并开始异步加载</text>
+
+  <path d="M120,228 L346,228" stroke="#5ac8fa" stroke-width="1.5" marker-end="url(#s1)"/>
+  <text class="mono" x="150" y="223">update_state_after_alloc(request, blocks, num_hit)</text>
+
+  <path d="M348,258 L562,258" stroke="#7dd3a0" stroke-width="1.5" marker-end="url(#s2)"/>
+  <text class="mono" x="374" y="253">start_load_kv(forward_context)</text>
+
+  <path d="M564,258 L917,258" stroke="#ffb86b" stroke-width="1.5" marker-end="url(#s3)"/>
+  <text class="mono" x="600" y="253">异步：备份 → 拷回显存</text>
+
+  <!-- phase 3 -->
+  <rect x="20" y="286" width="960" height="98" rx="7" fill="rgba(249,115,98,.06)" stroke="#2b3644" stroke-dasharray="4 4"/>
+  <text class="lbl2" x="30" y="302" fill="#f97362">阶段 3 · 计算期：只算没命中的那部分；同时在算完后把新 KV 存走</text>
+
+  <path d="M348,326 L917,326" stroke="#f97362" stroke-width="1.5" marker-end="url(#s1)"/>
+  <text class="mono" x="400" y="321">forward：对未命中的 token 做 prefill + 逐 token decode</text>
+
+  <path d="M348,362 L562,362" stroke="#ffb86b" stroke-width="1.5" marker-end="url(#s3)"/>
+  <text class="mono" x="374" y="357">save_kv_layer(layer_name,…) 每层一次 / 或 finish 时一次</text>
+
+  <!-- phase 4 -->
+  <rect x="20" y="394" width="960" height="62" rx="7" fill="rgba(167,139,250,.06)" stroke="#2b3644" stroke-dasharray="4 4"/>
+  <text class="lbl2" x="30" y="410" fill="#a78bfa">阶段 4 · 收尾：确保写盘/写远端完成，释放请求级状态</text>
+  <path d="M348,430 L562,430" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#s3)"/>
+  <text class="mono" x="374" y="425">wait_for_save() → 返回 KVConnectorOutput</text>
+  <text class="mono" x="600" y="425">后台线程继续把 L2/L3 的写完成</text>
+</svg>
+<figcaption><b>图 3-1</b> 四个阶段。注意关键设计：<b>查询（便宜）与搬运（昂贵）是分开的两个时间点</b>。调度器先只问「能命中多少」，这样它能据此少分配显存、少排计算，等确定要用了才真正搬数据。</figcaption>
+</figure>
+
+<h2><span class="num">3.2</span>放大：查询与命中判断</h2>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 420" role="img" aria-label="命中判断流程">
+  <defs>
+    <marker id="h1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#5ac8fa"/></marker>
+  </defs>
+  <rect x="24" y="20" width="952" height="52" rx="8" fill="#141c26" stroke="#5ac8fa"/>
+  <text class="lbl" x="40" y="42">输入：本次请求的完整 token 序列（例如 2048 个）+ chunk_size</text>
+  <text class="lbl2" x="40" y="62">注意：是「prompt 的 token」＋「已经生成出来的 token」一起算，所以多轮对话的第 N 轮能命中前 N-1 轮</text>
+
+  <path d="M500,72 L500,100" stroke="#5ac8fa" stroke-width="1.6" marker-end="url(#h1)"/>
+
+  <rect x="200" y="104" width="600" height="52" rx="8" fill="#182933" stroke="#3a4757"/>
+  <text class="lbl" x="216" y="126">TokenDatabase.process_tokens(tokens)</text>
+  <text class="lbl2" x="216" y="146">切成 ⌊L / chunk_size⌋ 个完整 chunk，逐个算出 CacheEngineKey</text>
+
+  <path d="M500,156 L500,184" stroke="#5ac8fa" stroke-width="1.6" marker-end="url(#h1)"/>
+
+  <rect x="200" y="188" width="600" height="52" rx="8" fill="#182933" stroke="#3a4757"/>
+  <text class="lbl" x="216" y="210">StorageManager 依次问每个后端：这个 key 有吗？</text>
+  <text class="lbl2" x="216" y="230">L1 字典查 → L2 文件/索引查 → L3 远端查（可配「只查 L1」以省延迟）</text>
+
+  <path d="M500,240 L500,268" stroke="#5ac8fa" stroke-width="1.6" marker-end="url(#h1)"/>
+
+  <!-- 两种结果 -->
+  <rect x="24" y="272" width="470" height="130" rx="8" fill="#121a16" stroke="#7dd3a0" stroke-width="1.6"/>
+  <text class="ttl" x="40" y="296" fill="#7dd3a0">命中（前缀连续命中 k 个 chunk）</text>
+  <text class="lbl2" x="40" y="318">返回 k × chunk_size 个 token</text>
+  <text class="lbl2" x="40" y="338">调度器据此：① 只为未命中的部分分配计算 ② 显存 block 也少分配</text>
+  <text class="lbl2" x="40" y="358">效果：prefill 直接跳过命中部分，TTFT 显著下降</text>
+  <text class="lbl2" x="40" y="380">注意「连续」二字：中间断了一个 chunk，后面即使有也是无效的</text>
+
+  <rect x="506" y="272" width="470" height="130" rx="8" fill="#1b1417" stroke="#f97362" stroke-width="1.6"/>
+  <text class="ttl" x="522" y="296" fill="#f97362">未命中</text>
+  <text class="lbl2" x="522" y="318">返回 0，走原生 vLLM 流程</text>
+  <text class="lbl2" x="522" y="338">整段 prompt 都要 prefill</text>
+  <text class="lbl2" x="522" y="358">但算完之后，这段 KV 会被 store 进缓存</text>
+  <text class="lbl2" x="522" y="380">所以「第一次慢、第二次快」是所有缓存系统的常态</text>
+</svg>
+<figcaption><b>图 3-2</b> 查询流程。返回的是<b>连续前缀长度</b>而非「命中总数」，这一点经常被误解。</figcaption>
+</figure>
+
+<div class="note warn">
+  <span class="t">为什么命中数总是 chunk_size 的整数倍</span>
+  因为只有完整 chunk 才有 key。假设 chunk_size=256、prompt 有 1000 个 token，那么只有前 768 个 token（3 个完整 chunk）可能命中，尾巴 232 个 token 必须重算。
+  如果你看到日志里命中 768 而不是 1000，这是设计如此，不是 bug。想提高命中率就调小 chunk_size（代价是索引更碎、元数据开销更大）。
+</div>
+
+<h2><span class="num">3.3</span>写路径（Store）：从显存到 L1/L2/L3</h2>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 560" role="img" aria-label="写路径数据流">
+  <defs>
+    <marker id="w1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#f2c14e"/></marker>
+    <marker id="w2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#7dd3a0"/></marker>
+    <marker id="w3" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#a78bfa"/></marker>
+  </defs>
+
+  <!-- step 0 -->
+  <rect x="24" y="16" width="952" height="58" rx="8" fill="#1b1417" stroke="#f97362" stroke-width="1.6"/>
+  <text class="lbl" x="40" y="38" fill="#f97362">STEP 0 · 前提：vLLM 已经算完，KV 就躺在设备显存的 paged 池里</text>
+  <text class="lbl2" x="40" y="58">此时我们手里有：token 列表、每个请求的 block_table（物理块号数组）、层的名字（如 model.layers.0.self_attn.attn）</text>
+
+  <path d="M500,74 L500,98" stroke="#f2c14e" stroke-width="1.6" marker-end="url(#w1)"/>
+
+  <!-- step 1 -->
+  <rect x="24" y="102" width="952" height="70" rx="8" fill="#141c26" stroke="#5ac8fa"/>
+  <text class="lbl" x="40" y="124" fill="#5ac8fa">STEP 1 · 切块与命名</text>
+  <text class="lbl2" x="40" y="144">TokenDatabase 把 token 切成 chunk，算出 key；尾部不满一块的直接丢弃（不缓存残缺块）</text>
+  <text class="mono" x="40" y="164">keys = [CacheEngineKey(model, world_size, worker_id, hash_i) for i in range(num_chunks)]</text>
+
+  <path d="M500,172 L500,196" stroke="#f2c14e" stroke-width="1.6" marker-end="url(#w1)"/>
+
+  <!-- step 2 -->
+  <rect x="24" y="200" width="952" height="96" rx="8" fill="#241c14" stroke="#f2c14e"/>
+  <text class="lbl" x="40" y="222" fill="#f2c14e">STEP 2 · 申请内存（不是每次都 malloc）</text>
+  <text class="lbl2" x="40" y="242">StorageManager.reserve_put(key, shape, dtype) → Allocator.allocate(...) 从内存池切一块</text>
+  <text class="lbl2" x="40" y="262">拿到 MemoryObj：既是 data_ptr（给 C++ 用），也是 torch 视图（给 PyTorch 用），都指向池子里的同一段字节</text>
+  <text class="lbl2" x="40" y="282">如果池子满了 → 按 LRU 淘汰旧对象；这一步会「丢掉」旧 KV（可配置让它先下沉到下一层）</text>
+
+  <path d="M500,296 L500,320" stroke="#f2c14e" stroke-width="1.6" marker-end="url(#w1)"/>
+
+  <!-- step 3 -->
+  <rect x="24" y="324" width="952" height="104" rx="8" fill="#1b1417" stroke="#f97362"/>
+  <text class="lbl" x="40" y="346" fill="#f97362">STEP 3 · 真正的拷贝：显存 → 主机内存（本讲义第 5 章重点）</text>
+  <text class="lbl2" x="40" y="366">GPUConnector.from_gpu(memory_obj, start, end, block_ids, layer_id, ...)</text>
+  <text class="lbl2" x="40" y="386">语义：把「第 layer 层、逻辑位置 start..end」这段 KV，按 block_ids 指向的物理块，拷到 memory_obj</text>
+  <text class="lbl2" x="40" y="406">实现：一连串 cudaMemcpyAsync(device→host, pinned) 或一个自定义 kernel（csrc/）；走 DMA 引擎，不占 CPU</text>
+  <text class="lbl2" x="40" y="424">因为目标可能是 pin memory，这里是真正的「零额外拷贝」路径：直接 DMA 到池子里</text>
+
+  <path d="M500,428 L500,452" stroke="#f2c14e" stroke-width="1.6" marker-end="url(#w1)"/>
+
+  <!-- step 4 -->
+  <rect x="24" y="456" width="470" height="94" rx="8" fill="#121a16" stroke="#7dd3a0"/>
+  <text class="lbl" x="40" y="478" fill="#7dd3a0">STEP 4a · 本地可见（L1）</text>
+  <text class="lbl2" x="40" y="498">LocalCPUBackend 把 key → MemoryObj 记进字典</text>
+  <text class="lbl2" x="40" y="518">此刻同一个实例的下一个请求就能命中了</text>
+  <text class="lbl2" x="40" y="538">这一步是「同步完成」语义的关键，必须快</text>
+
+  <rect x="506" y="456" width="470" height="94" rx="8" fill="#171420" stroke="#a78bfa"/>
+  <text class="lbl" x="522" y="478" fill="#a78bfa">STEP 4b · 异步下沉（L2 / L3）</text>
+  <text class="lbl2" x="522" y="498">submit_put_task()：把 MemoryObj 交给后台线程/协程</text>
+  <text class="lbl2" x="522" y="518">L2：写文件；L3：序列化后经 ZMQ/RDMA 发给 server</text>
+  <text class="lbl2" x="522" y="538">绝不允许阻塞推理主循环——这是性能红线</text>
+</svg>
+<figcaption><b>图 3-3</b> 写路径七步。核心洞察：<b>STEP 3 是唯一真正搬字节的地方</b>，STEP 4b 是异步的。LMCache 的性能优化几乎都在 STEP 2/3/4b 上做文章。</figcaption>
+</figure>
+
+<h3>写路径在代码里长什么样</h3>
+<figure class="code">
+<figcaption><span class="path">lmcache/v1/cache_engine.py · store / retrieve 的主干（结构摘要）</span></figcaption>
+<pre><code><span class="c-key">def</span> <span class="c-fn">store</span>(self, tokens, mask=<span class="c-key">None</span>, **kwargs):
+    <span class="c-com"># ① token → keys（切 chunk + 累进哈希，尾部残块丢弃）</span>
+    keys = [k <span class="c-key">for</span> k <span class="c-key">in</span> self.token_database.<span class="c-fn">process_tokens</span>(tokens, mask)]
+
+    <span class="c-com"># ② 为每个 key 申请缓冲，并返回「借条」</span>
+    <span class="c-com">#    reserve_put 内部：Allocator.allocate → 若池满则 LRU 淘汰</span>
+    memory_objs = [self.storage_manager.<span class="c-fn">reserve_put</span>(k, kv_shape, kv_dtype) <span class="c-key">for</span> k <span class="c-key">in</span> keys]
+
+    <span class="c-com"># ③ 显存 → 缓冲（真正的搬运；layerwise 模式下这里只搬一层）</span>
+    <span class="c-key">if</span> self.enable_layerwise:
+        self.gpu_connector.<span class="c-fn">from_gpu</span>(memory_objs, layer_id=kwargs[<span class="c-str">"layer_id"</span>], ...)
+    <span class="c-key">else</span>:
+        <span class="c-key">for</span> layer_id <span class="c-key">in</span> <span class="c-fn">range</span>(num_layers):          <span class="c-com"># 逐层循环，也常被实现为一次批量</span>
+            self.gpu_connector.<span class="c-fn">from_gpu</span>(memory_objs, layer_id=layer_id, ...)
+
+    <span class="c-com"># ④ 登记进 L1（同步，立刻可被命中）</span>
+    self.storage_manager.<span class="c-fn">put</span>(keys, memory_objs)          <span class="c-com"># 内部 → local_cpu_backend</span>
+
+    <span class="c-com"># ⑤ 异步下沉 L2/L3（不阻塞调用方）</span>
+    <span class="c-com">#    各后端实现 submit_put_task；调用方之后可用 wait_for_save() 等它完成</span></code></pre>
+</figure>
+
+<h2><span class="num">3.4</span>读路径（Retrieve）：从缓存回到显存</h2>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 500" role="img" aria-label="读路径数据流">
+  <defs>
+    <marker id="r1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#5ac8fa"/></marker>
+  </defs>
+  <rect x="24" y="16" width="952" height="56" rx="8" fill="#141c26" stroke="#5ac8fa" stroke-width="1.6"/>
+  <text class="lbl" x="40" y="38" fill="#5ac8fa">STEP R0 · 触发时机</text>
+  <text class="lbl2" x="40" y="58">worker 侧在模型 forward 之前调用 start_load_kv()（非 layerwise：一次性搬完；layerwise：每层搬一次）</text>
+
+  <path d="M500,72 L500,96" stroke="#5ac8fa" stroke-width="1.6" marker-end="url(#r1)"/>
+
+  <rect x="24" y="100" width="952" height="66" rx="8" fill="#182933" stroke="#3a4757"/>
+  <text class="lbl" x="40" y="122">STEP R1 · 再算一次 keys</text>
+  <text class="lbl2" x="40" y="142">用与写路径完全相同的算法切块哈希（必须逐比特一致，否则永远 miss）</text>
+  <text class="mono" x="40" y="160">keys = token_database.process_tokens(tokens, mask)</text>
+
+  <path d="M500,166 L500,190" stroke="#5ac8fa" stroke-width="1.6" marker-end="url(#r1)"/>
+
+  <rect x="24" y="194" width="952" height="86" rx="8" fill="#16201a" stroke="#7dd3a0"/>
+  <text class="lbl" x="40" y="216" fill="#7dd3a0">STEP R2 · 逐层问后端要数据（可能跨介质）</text>
+  <text class="lbl2" x="40" y="236">L1 命中 → 直接返回池子里已有 MemoryObj（<tspan fill="#fff">零拷贝</tspan>，没有任何数据搬动）</text>
+  <text class="lbl2" x="40" y="256">L1 未命中 → 问 L2：读文件 → 把字节读进一个 MemoryObj（可能阻塞，走磁盘路径）</text>
+  <text class="lbl2" x="40" y="276">L2 也没有 → 问 L3：反序列化后写入 MemoryObj（走网络，延迟最高）</text>
+
+  <path d="M500,280 L500,304" stroke="#5ac8fa" stroke-width="1.6" marker-end="url(#r1)"/>
+
+  <rect x="24" y="308" width="952" height="96" rx="8" fill="#1b1417" stroke="#f97362"/>
+  <text class="lbl" x="40" y="330" fill="#f97362">STEP R3 · 缓冲区 → 显存（与写路径对称的反向搬运）</text>
+  <text class="lbl2" x="40" y="350">GPUConnector.to_gpu(memory_obj, start, end, block_ids, layer_id)</text>
+  <text class="lbl2" x="40" y="370">把连续缓冲区里的 KV「散写」回 block_ids 指定的物理块</text>
+  <text class="lbl2" x="40" y="390">写完后必须让计算流看到：通过 stream/event 或 stream synchronize 建立顺序保证</text>
+
+  <path d="M500,404 L500,428" stroke="#5ac8fa" stroke-width="1.6" marker-end="url(#r1)"/>
+
+  <rect x="24" y="432" width="952" height="56" rx="8" fill="#241c14" stroke="#ffb86b"/>
+  <text class="lbl" x="40" y="454" fill="#ffb86b">STEP R4 · 一致性检查（重要）</text>
+  <text class="lbl2" x="40" y="474">若 metadata 里的 token_ids 与当前请求的 token 不匹配 → 视为未命中并丢弃，宁可重算也不出错。这是防「串味」的最后一道闸。</text>
+</svg>
+<figcaption><b>图 3-4</b> 读路径。注意 R2 的三种情况延迟差了几个数量级，而 R4 的存在说明：<b>缓存系统的第一要求是正确，第二才是快</b>。</figcaption>
+</figure>
+
+<h2><span class="num">3.5</span>layerwise：让搬运「藏」在计算后面</h2>
+
+<p>如果不做任何重叠，缓存命中的代价就是「等数据搬完再开始算」。数据量一大，这个等待可能比重新计算还久。layerwise 模式把「搬第 i+1 层」和「算第 i 层」放在时间上重叠。</p>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 400" role="img" aria-label="非 layerwise 与 layerwise 时间线对比">
+  <!-- 非 layerwise -->
+  <text class="ttl" x="24" y="30" fill="#f97362">① 非 layerwise：先全部搬完，再开始算（串行等待）</text>
+  <text class="lbl2" x="24" y="52">时间 →</text>
+  <rect x="90" y="36" width="330" height="34" rx="5" fill="#3a2a1d" stroke="#f2c14e"/>
+  <text class="lbl" x="180" y="58" fill="#f2c14e">搬运所有层的 KV（200 ms）</text>
+  <rect x="424" y="36" width="420" height="34" rx="5" fill="#2a1d20" stroke="#f97362"/>
+  <text class="lbl" x="560" y="58" fill="#f97362">开始 prefill / decode（500 ms）</text>
+  <text class="lbl2" x="856" y="58">总 700 ms</text>
+
+  <!-- layerwise -->
+  <text class="ttl" x="24" y="122" fill="#7dd3a0">② layerwise：搬运与计算流水重叠</text>
+  <text class="lbl2" x="24" y="144">时间 →</text>
+  <g font-size="11">
+    <rect x="90" y="128" width="70" height="30" rx="4" fill="#3a2a1d" stroke="#f2c14e"/>
+    <text class="lbl2" x="102" y="148">搬 L0</text>
+    <rect x="164" y="128" width="70" height="30" rx="4" fill="#3a2a1d" stroke="#f2c14e"/>
+    <text class="lbl2" x="176" y="148">搬 L1</text>
+    <rect x="238" y="128" width="70" height="30" rx="4" fill="#3a2a1d" stroke="#f2c14e"/>
+    <text class="lbl2" x="250" y="148">搬 L2</text>
+    <rect x="312" y="128" width="70" height="30" rx="4" fill="#3a2a1d" stroke="#f2c14e"/>
+    <text class="lbl2" x="324" y="148">搬 L3</text>
+    <rect x="386" y="128" width="70" height="30" rx="4" fill="#3a2a1d" stroke="#f2c14e"/>
+    <text class="lbl2" x="398" y="148">搬 L4</text>
+    <text class="lbl2" x="466" y="148">…只搬到需要的深度</text>
+
+    <rect x="128" y="168" width="70" height="30" rx="4" fill="#2a1d20" stroke="#f97362"/>
+    <text class="lbl2" x="140" y="188">算 L0</text>
+    <rect x="202" y="168" width="70" height="30" rx="4" fill="#2a1d20" stroke="#f97362"/>
+    <text class="lbl2" x="214" y="188">算 L1</text>
+    <rect x="276" y="168" width="70" height="30" rx="4" fill="#2a1d20" stroke="#f97362"/>
+    <text class="lbl2" x="288" y="188">算 L2</text>
+    <rect x="350" y="168" width="70" height="30" rx="4" fill="#2a1d20" stroke="#f97362"/>
+    <text class="lbl2" x="362" y="188">算 L3</text>
+    <rect x="424" y="168" width="420" height="30" rx="4" fill="#1b1417" stroke="#3a4757"/>
+    <text class="lbl2" x="440" y="188">后续计算照常（decode 循环）</text>
+  </g>
+  <text class="lbl2" x="860" y="188">总 ≈ 500 ms + 首层搬运</text>
+
+  <!-- 同步细节 -->
+  <rect x="24" y="222" width="952" height="164" rx="8" fill="#141c26" stroke="#5ac8fa"/>
+  <text class="ttl" x="40" y="248" fill="#5ac8fa">layerwise 的代价：同步变得非常微妙</text>
+  <text class="lbl2" x="40" y="272">① 需要一个<tspan fill="#fff">独立拷贝流</tspan>（copy stream），与计算流（compute stream）分开，否则无法重叠。</text>
+  <text class="lbl2" x="40" y="294">② 用 event 建立依赖：compute_stream 等 copy_stream 的第 i 层完成事件，而不是全局 synchronize（那样等于没重叠）。</text>
+  <text class="lbl2" x="40" y="316">③ 「算第 i 层」用的 KV 页必须已经就位；如果某层缺失，要么退化重算该层，要么报错。</text>
+  <text class="lbl2" x="40" y="338">④ 首层无法隐藏（必须等第一层搬完才能开始），所以首层搬运延迟 = 命中带来的固定开销上限。</text>
+  <text class="lbl2" x="40" y="360">⑤ 调试更困难：出现「结果不对」时，先怀疑同步而不是算法。相关 API：torch.cuda.Stream / Event，NPU 上是 torch.npu.Stream / Event。</text>
+</svg>
+<figcaption><b>图 3-5</b> layerwise 是把「搬运总时间」摊到「计算总时间」里。它不减少总工作量，只是消除串行等待。这也是 LMCache 在 vLLM 里要求层回调（<code>save_kv_layer</code> / <code>wait_for_layer_load</code>）的原因。</figcaption>
+</figure>
+
+<h2><span class="num">3.6</span>配置与启动：怎么把 LMCache 挂到 vLLM 上</h2>
+
+<figure class="code">
+<figcaption><span class="path">vLLM 侧启动示例</span><span class="sub">命令行为官方文档用法；Python 片段为上层的配置骨架</span></figcaption>
+<pre><code><span class="c-com"># ── 命令行方式（最常见）──────────────────────────────</span>
+vllm serve meta-llama/Llama-3.1-8B-Instruct \
+  --kv-transfer-config <span class="c-str">'{</span>
+      <span class="c-str">"kv_connector": "LMCacheConnectorV1",</span>   <span class="c-com"># ← 由 LMCache 注册进来的连接器名</span>
+      <span class="c-str">"kv_role": "kv_both"</span>                     <span class="c-com"># ← 既能存也能取（LMCache 的典型角色）</span>
+    <span class="c-str">}'</span>
+
+<span class="c-com"># LMCache 自己的配置走环境变量 / 配置文件（示例）</span>
+<span class="c-com">#   LMCACHE_CONFIG_FILE=/path/to/lmcache.yaml</span>
+<span class="c-com">#   LMCACHE_USE_EXPERIMENTAL=True      # 启用新版接口</span>
+
+<span class="c-com"># ── YAML 配置示例（字段名以你安装版本为准）───────────────</span>
+chunk_size: 256                <span class="c-com"># 缓存粒度：越小命中越细，元数据越多</span>
+local_cpu: true                <span class="c-com"># 启用 L1（主机内存）</span>
+max_local_cpu_size: 40         <span class="c-com"># L1 容量（GB）——注意这是 GB 不是 GiB</span>
+local_disk: <span class="c-str">"/data/lmcache"</span>  <span class="c-com"># 启用 L2：本地磁盘目录</span>
+max_local_disk_size: 200       <span class="c-com"># L2 容量（GB）</span>
+remote_url: <span class="c-str">"host:65432"</span>     <span class="c-com"># 启用 L3：远端 LMCache Server</span>
+use_pin_memory: true           <span class="c-com"># L1 用页锁定内存，显存拷贝走 DMA（强烈建议开）</span>
+enable_async_loading: true     <span class="c-com"># 允许「先查后取」，调度器提前知道命中量</span>
+enable_layerwise: true         <span class="c-com"># 逐层搬运，与计算重叠（需 vLLM 支持层回调）</span>
+enable_blending: false         <span class="c-com"># CPU 侧模糊前缀匹配（多轮/RAG 场景可开）</span>
+enable_metrics: true           <span class="c-com"># 输出命中率等指标</span>
+
+<span class="c-com"># ── 独立起一个 L3 Server（可选）──────────────────────────</span>
+<span class="c-com"># python -m lmcache.server host 65432</span></code></pre>
+</figure>
+
+<div class="note tip">
+  <span class="t">调优顺序建议</span>
+  ① 先确认命中率（<code>enable_metrics</code>）——命中率低的话其他都白搭，通常是 <code>chunk_size</code> 或 chat template 不一致导致。<br>
+  ② 再确认 L1 是否真的用上 pin memory（用 <code>use_pin_memory: true</code>），这一项对拷贝带宽影响最大。<br>
+  ③ 然后开 layerwise 消除串行等待。<br>
+  ④ 最后才考虑加 L2/L3——它们只提高「命中率上限」，不提高「命中速度」。
+</div>
+
+<h2><span class="num">3.7</span>把两条路径并排看</h2>
+<table class="tbl">
+  <thead><tr><th>环节</th><th>写路径（Store）</th><th>读路径（Retrieve）</th><th>共用组件</th></tr></thead>
+  <tbody>
+    <tr><td>触发点</td><td>算完之后（<code>save_kv_layer</code> / <code>request_finished</code>）</td><td>算之前（<code>start_load_kv</code>）</td><td>vLLM 适配器</td></tr>
+    <tr><td>键的计算</td><td><code>process_tokens()</code> 切块哈希</td><td>同样算法再算一遍</td><td>TokenDatabase</td></tr>
+    <tr><td>缓冲</td><td><code>reserve_put</code> 分配新块，可能触发 LRU 淘汰</td><td><code>get_blocking</code> 复用已有块（L1 时零拷贝）</td><td>StorageManager + Allocator</td></tr>
+    <tr><td>字节搬运</td><td><code>from_gpu</code>：显存 → 主机（DMA）</td><td><code>to_gpu</code>：主机 → 显存（DMA）</td><td>GPUConnector</td></tr>
+    <tr><td>介质层级</td><td>L1 同步登记，L2/L3 异步下沉</td><td>L1→L2→L3 顺序查找</td><td>Backends</td></tr>
+    <tr><td>正确性保护</td><td>只存完整 chunk</td><td>校验 metadata 的 token_ids，不符则丢弃</td><td>CacheEngineKey + metadata</td></tr>
+    <tr><td>同步语义</td><td><code>wait_for_save()</code></td><td><code>wait_for_layer_load()</code>（layerwise）</td><td>vLLM 连接器协议</td></tr>
+  </tbody>
+</table>
+
+<div class="pager">
+  <a href="02-components.html">← 上一章：组件组成</a>
+  <a class="next" href="04-lmcache-ascend.html">下一章：LMCache-Ascend →</a>
+</div>
+
+<footer>LMCache 图解讲义 · 03 数据流</footer>
+</main>
+</body>
+</html>

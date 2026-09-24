@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>06 vLLM 里的 LMCache 相关组件 · LMCache 图解讲义</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">⚡ LMCache 图解讲义</span>
+  <nav>
+    <a href="index.html">目录</a>
+    <a href="01-basics.html">基础概念</a>
+    <a href="02-components.html">组件组成</a>
+    <a href="03-dataflow.html">数据流</a>
+    <a href="04-lmcache-ascend.html">LMCache-Ascend</a>
+    <a href="05-ipc-shm-pickle.html">IPC / SHM / Pickle</a>
+    <a href="06-vllm-connector.html" class="active">vLLM 集成</a>
+    <a href="07-npu-ipc-stack.html">NPU/CUDA IPC 层级</a>
+    <a href="99-reference.html">代码索引</a>
+  </nav>
+</header>
+
+<main class="wrap">
+<h1>06 · vLLM 里跟 LMCache 相关的都有什么</h1>
+<p class="lead">你问的「LMCache-driver 和 engine-driver」在 vLLM 里其实对应两个角色：<strong>调度侧（scheduler/driver）</strong>和<strong>执行侧（worker/engine）</strong>。这一章把它们逐个点名，并给出真实代码路径。</p>
+
+<h2><span class="num">6.1</span>先纠正一个命名</h2>
+<div class="note warn">
+  <span class="t">vLLM 里没有叫 "LMCache driver" 或 "engine driver" 的类</span>
+  这是社区口语化的说法。准确的说法是 vLLM 的 <strong>KV Connector 框架</strong>把连接器拆成两个角色：
+  <ul>
+    <li><strong>Scheduler 侧</strong>（跑在 EngineCore 的调度进程里）—— 决定「这次请求能省多少、要搬多少」。有人叫它 driver 侧。</li>
+    <li><strong>Worker 侧</strong>（跑在模型执行进程里）—— 真正执行搬运。</li>
+  </ul>
+  同一个连接器类内用 <code>@supports_hma</code> 之类的装饰器和角色判断来区分自己当前在哪个进程、该干什么。
+  另外「EngineCore」是 vLLM v1 的引擎核心进程；LMCache 的代码是<strong>挂进</strong>它的，不是引擎本身的一部分。
+</div>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 470" role="img" aria-label="vLLM 进程结构与 LMCache 相关组件">
+  <defs>
+    <marker id="v1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#5ac8fa"/></marker>
+  </defs>
+
+  <!-- LLM / API server -->
+  <rect x="24" y="16" width="952" height="72" rx="9" fill="#1b1417" stroke="#f97362" stroke-width="1.6"/>
+  <text class="ttl" x="40" y="40" fill="#f97362">API Server 进程（vllm serve / LLM）—— 与 LMCache 无直接关系</text>
+  <rect x="40" y="50" width="290" height="30" rx="6" fill="#241a1d" stroke="#3a4757"/>
+  <text class="lbl2" x="52" y="70">OpenAI 兼容接口 / AsyncLLM</text>
+  <rect x="346" y="50" width="300" height="30" rx="6" fill="#241a1d" stroke="#3a4757"/>
+  <text class="lbl2" x="358" y="70">此时只解析 --kv-transfer-config</text>
+  <rect x="662" y="50" width="296" height="30" rx="6" fill="#241a1d" stroke="#3a4757"/>
+  <text class="lbl2" x="674" y="70">构造 KVTransferConfig 传给引擎</text>
+
+  <!-- 左：EngineCore -->
+  <rect x="24" y="102" width="470" height="230" rx="9" fill="#141c26" stroke="#5ac8fa" stroke-width="1.8"/>
+  <text class="ttl" x="40" y="126" fill="#5ac8fa">EngineCore 进程 · 调度侧（俗称 driver 侧）</text>
+
+  <rect x="40" y="138" width="438" height="42" rx="7" fill="#101820" stroke="#3a4757"/>
+  <text class="lbl" x="52" y="156">Scheduler</text>
+  <text class="lbl2" x="52" y="172">调用连接器的调度侧方法，拿到「命中多少 token」</text>
+
+  <rect x="40" y="188" width="438" height="60" rx="7" fill="#101820" stroke="#3a4757"/>
+  <text class="lbl" x="52" y="208">KVConnectorBase_V1（抽象基类）</text>
+  <text class="mono" x="52" y="226">get_num_new_matched_tokens()</text>
+  <text class="mono" x="52" y="242">update_state_after_alloc() · build_connector_meta()</text>
+
+  <rect x="40" y="256" width="438" height="62" rx="7" fill="#182933" stroke="#5ac8fa"/>
+  <text class="lbl" x="52" y="276" fill="#5ac8fa">LMCacheConnectorV1（调度侧实现）</text>
+  <text class="mono" x="52" y="294">self._lmcache_engine.lookup(tokens)</text>
+  <text class="lbl2" x="52" y="312">只查 key，不搬数据 ← 这是关键性能设计</text>
+
+  <!-- 右：Worker -->
+  <rect x="506" y="102" width="470" height="230" rx="9" fill="#1b1417" stroke="#f97362" stroke-width="1.8"/>
+  <text class="ttl" x="522" y="126" fill="#f97362">Worker 进程 · 执行侧（俗称 engine 侧）</text>
+
+  <rect x="522" y="138" width="438" height="42" rx="7" fill="#20181b" stroke="#3a4757"/>
+  <text class="lbl" x="534" y="156">ModelRunner / GPUModelRunner</text>
+  <text class="lbl2" x="534" y="172">执行 forward，并在前后插入连接器回调</text>
+
+  <rect x="522" y="188" width="438" height="60" rx="7" fill="#20181b" stroke="#3a4757"/>
+  <text class="lbl" x="534" y="208">KVConnectorBase_V1（worker 侧接口）</text>
+  <text class="mono" x="534" y="226">start_load_kv() · wait_for_layer_load()</text>
+  <text class="mono" x="534" y="242">save_kv_layer() · wait_for_save()</text>
+
+  <rect x="522" y="256" width="438" height="62" rx="7" fill="#241a1d" stroke="#f97362"/>
+  <text class="lbl" x="534" y="276" fill="#f97362">LMCacheConnectorV1（worker 侧实现）</text>
+  <text class="mono" x="534" y="294">→ LMCacheConnectorV1Impl（真正的适配器）</text>
+  <text class="lbl2" x="534" y="312">调用 LMCacheEngine.retrieve / store</text>
+
+  <!-- 中间通信 -->
+  <path d="M494,215 L506,215" stroke="#5ac8fa" stroke-width="1.8" marker-end="url(#v1)"/>
+  <path d="M506,240 L494,240" stroke="#5ac8fa" stroke-width="1.8" marker-end="url(#v1)"/>
+  <text class="lbl2" x="452" y="342">调度决策与元数据经 EngineCore 的调度输出下发</text>
+
+  <!-- 底部：LMCache 库 -->
+  <rect x="24" y="346" width="952" height="110" rx="9" fill="#171420" stroke="#a78bfa" stroke-width="1.7"/>
+  <text class="ttl" x="40" y="370" fill="#a78bfa">LMCache 库（pip install lmcache）—— 连接器最终调用的后端</text>
+  <rect x="40" y="380" width="228" height="60" rx="7" fill="#1d1826" stroke="#3a4757"/>
+  <text class="lbl2" x="52" y="402">LMCacheEngine</text>
+  <text class="lbl2" x="52" y="422">lookup / retrieve / store</text>
+  <rect x="276" y="380" width="228" height="60" rx="7" fill="#1d1826" stroke="#3a4757"/>
+  <text class="lbl2" x="288" y="402">StorageManager + Backends</text>
+  <text class="lbl2" x="288" y="422">L1 / L2 / L3</text>
+  <rect x="512" y="380" width="228" height="60" rx="7" fill="#1d1826" stroke="#3a4757"/>
+  <text class="lbl2" x="524" y="402">GPUConnector</text>
+  <text class="lbl2" x="524" y="422">显存 ↔ 内存（DMA）</text>
+  <rect x="748" y="380" width="210" height="60" rx="7" fill="#1d1826" stroke="#3a4757"/>
+  <text class="lbl2" x="760" y="402">LMCacheWorker</text>
+  <text class="lbl2" x="760" y="422">与调度侧通信（可选）</text>
+</svg>
+<figcaption><b>图 6-1</b> vLLM 的进程结构，以及 LMCache 相关代码分别落在哪个进程。记住：<b>调度侧只查、worker 侧才搬</b>。</figcaption>
+</figure>
+
+<h2><span class="num">6.2</span>vLLM 侧的文件清单</h2>
+
+<figure class="code">
+<figcaption><span class="path">vllm/ 目录下与 LMCache 直接相关的文件</span><span class="sub">路径以 vLLM main 分支为参考；旧版本位置可能不同</span></figcaption>
+<pre><code>vllm/
+├── distributed/kv_transfer/kv_connector/
+│   ├── factory.py                          <span class="c-com"># ★ KVConnectorFactory：按名字造连接器</span>
+│   │                                       <span class="c-com">#   register_connector("LMCacheConnectorV1", module, class)</span>
+│   ├── v1/
+│   │   ├── base.py                         <span class="c-com"># ★ KVConnectorBase_V1：所有连接器的父类/接口</span>
+│   │   ├── lmcache_connector.py            <span class="c-com"># ★ 连接器骨架：角色分派 + 委托给 Impl</span>
+│   │   ├── lmcache_integration/
+│   │   │   ├── vllm_v1_adapter.py          <span class="c-com"># ★★ 真正的业务逻辑（最该读这个文件）</span>
+│   │   │   └── utils.py                    <span class="c-com"># 配置解析、LoadSpec/SaveSpec 等数据结构</span>
+│   │   └── nixl_connector.py               <span class="c-com"># 另一个连接器（disagg 场景），机制可类比</span>
+│   └── kv_connector.py                     <span class="c-com"># 兼容层：re-export</span>
+├── config/
+│   └── kv_transfer.py                      <span class="c-com"># ★ KVTransferConfig：kv_connector / kv_role / kv_connector_extra_config</span>
+├── v1/core/sched/scheduler.py              <span class="c-com"># 调度器：在分配/调度时调用连接器的调度侧方法</span>
+├── v1/worker/gpu_model_runner.py           <span class="c-com"># ★ 执行侧：在 forward 前后调用 start_load_kv / save_kv_layer / wait_for_save</span>
+└── v1/engine/core.py                       <span class="c-com"># EngineCore：把调度输出（含 connector meta）下发给 worker</span></code></pre>
+</figure>
+
+<div class="note">
+  <span class="t">LMCache 侧对应的文件（配对看）</span>
+  <ul>
+    <li><code>lmcache/integration/vllm/lmcache_connector.py</code> —— 与 vLLM 的 <code>lmcache_connector.py</code> 对应（有些版本 LMCache 侧直接提供同名模块）。</li>
+    <li><code>lmcache/integration/vllm/vllm_v1_adapter.py</code> —— 与 <code>lmcache_integration/vllm_v1_adapter.py</code> 对应，提供 <code>LMCacheConnectorV1Impl</code>。</li>
+    <li>在不同 vLLM 版本上，LMCache 还提供过 <code>lmcache_connector_v1_085.py</code> 之类针对特定版本的实现——<strong>这本身就说明接口随 vLLM 版本在变</strong>。</li>
+  </ul>
+</div>
+
+<h2><span class="num">6.3</span>连接器接口：两套方法，两个进程</h2>
+
+<figure class="code">
+<figcaption><span class="path">vllm/distributed/kv_transfer/kv_connector/v1/base.py</span><span class="sub">结构摘要 · 保留真实方法名与语义</span></figcaption>
+<pre><code><span class="c-key">class</span> <span class="c-ty">KVConnectorRole</span>(Enum):
+    SCHEDULER = auto()      <span class="c-com"># 调度侧：跑在 EngineCore 进程</span>
+    WORKER = auto()         <span class="c-com"># 执行侧：跑在模型执行进程</span>
+
+<span class="c-key">class</span> <span class="c-ty">KVConnectorBase_V1</span>:
+    <span class="c-com"># ══════════ 调度侧（Scheduler / driver 侧）══════════</span>
+
+    <span class="c-key">def</span> <span class="c-fn">get_num_new_matched_tokens</span>(self, request, num_computed_tokens):
+        <span class="c-str">"""这次请求有多少 token 能直接从外部缓存拿到（不需要重算）。
+        返回 (命中数, 是否需要异步加载)。
+        LMCache 在这里做 lookup —— 注意：只查 key，不搬数据！
+        这是整个集成中最关键的性能设计：让调度器尽早知道能省多少。"""</span>
+
+    <span class="c-key">def</span> <span class="c-fn">update_state_after_alloc</span>(self, request, blocks, num_external_tokens):
+        <span class="c-str">"""调度器已经分配好 KV block 了，告诉连接器"这些块归这个请求"，
+        连接器据此准备后续的加载计划（LoadSpec）。"""</span>
+
+    <span class="c-key">def</span> <span class="c-fn">build_connector_meta</span>(self, scheduler_output):
+        <span class="c-str">"""把本步所有请求的加载/保存计划打包成 meta，
+        随 SchedulerOutput 一起下发给 worker。"""</span>
+
+    <span class="c-key">def</span> <span class="c-fn">request_finished</span>(self, request, block_ids):
+        <span class="c-str">"""请求结束：决定要不要保存、以及返回一个延迟对象让 worker 等待保存完成。"""</span>
+
+    <span class="c-com"># ══════════ 执行侧（Worker / engine 侧）══════════</span>
+
+    <span class="c-key">def</span> <span class="c-fn">start_load_kv</span>(self, forward_context):
+        <span class="c-str">"""每次 forward 之前调用：启动 KV 加载。
+        非 layerwise：一次搬完；layerwise：只发起，后续逐层等待。"""</span>
+
+    <span class="c-key">def</span> <span class="c-fn">wait_for_layer_load</span>(self, layer_name):
+        <span class="c-str">"""layerwise 专用：算到第 i 层前，等第 i 层的数据搬运完成。"""</span>
+
+    <span class="c-key">def</span> <span class="c-fn">save_kv_layer</span>(self, layer_name, kv_layer, attn_metadata, **kwargs):
+        <span class="c-str">"""layerwise 专用：第 i 层算完立刻把它的 KV 送去缓存（不等全部算完）。"""</span>
+
+    <span class="c-key">def</span> <span class="c-fn">wait_for_save</span>(self):
+        <span class="c-str">"""forward 结束后：确保本步的保存已落地，返回 KVConnectorOutput。"""</span>
+
+    <span class="c-key">def</span> <span class="c-fn">get_finished</span>(self, finished_req_ids):
+        <span class="c-str">"""返回已完成的请求 id，供引擎回收状态。"""</span>
+
+    <span class="c-key">def</span> <span class="c-fn">register_kv_caches</span>(self, kv_caches):
+        <span class="c-str">"""★ 极其重要：把 vLLM 的 KV cache 张量交给连接器。
+        连接器从这里拿到：每一层 KV 的形状、dtype、页大小、显存指针。
+        没有这一步，连接器根本不知道数据在哪、长什么样。"""</span></code></pre>
+</figure>
+
+<div class="note tip">
+  <span class="t">如果只让你读一个文件</span>
+  读 <code>register_kv_caches</code> 和 <code>start_load_kv</code> 的实现。前者告诉你「显存里的 KV 长什么样」，
+  后者告诉你「数据怎么进去」。这两个方法串起来就是完整的搬运路径。
+</div>
+
+<h2><span class="num">6.4</span>LMCacheConnectorV1：角色分派与委托</h2>
+
+<p>这个类的职责非常薄：判断自己是调度侧还是执行侧，然后把调用转给 <code>LMCacheConnectorV1Impl</code>。真正的逻辑都在 Impl 里。</p>
+
+<figure class="code">
+<figcaption><span class="path">vllm/distributed/kv_transfer/kv_connector/v1/lmcache_connector.py</span><span class="sub">结构摘要（保留真实类名与方法名，省略参数与日志）</span></figcaption>
+<pre><code><span class="c-com"># ── 注册：让 vLLM 能通过字符串名字找到这个连接器 ──────────────</span>
+<span class="c-fn">register_connector</span>(
+    <span class="c-str">"LMCacheConnectorV1"</span>,                       <span class="c-com"># ← --kv-transfer-config 里写的名字</span>
+    <span class="c-str">"lmcache.integration.vllm.lmcache_connector"</span>,  <span class="c-com"># ← 模块</span>
+    <span class="c-str">"LMCacheConnectorV1"</span>,                       <span class="c-com"># ← 类名</span>
+)
+
+<span class="c-key">class</span> <span class="c-ty">LMCacheConnectorV1</span>(KVConnectorBase_V1):
+
+    <span class="c-key">def</span> <span class="c-fn">__init__</span>(self, vllm_config, role: KVConnectorRole, kv_cache_config):
+        self._role = role
+        <span class="c-com"># 根据角色构造对应的 Impl —— 两个进程里各建一个</span>
+        self._lmcache_engine_impl = <span class="c-fn">LMCacheConnectorV1Impl</span>(
+            vllm_config, role, self, kv_cache_config)
+
+    <span class="c-com"># ── 调度侧：直接转发 ────────────────────────────────</span>
+    <span class="c-key">def</span> <span class="c-fn">get_num_new_matched_tokens</span>(self, request, num_computed_tokens):
+        <span class="c-key">return</span> self._lmcache_engine_impl.<span class="c-fn">get_num_new_matched_tokens</span>(
+            request, num_computed_tokens)
+
+    <span class="c-key">def</span> <span class="c-fn">update_state_after_alloc</span>(self, request, blocks, num_external_tokens):
+        self._lmcache_engine_impl.<span class="c-fn">update_state_after_alloc</span>(...)
+
+    <span class="c-key">def</span> <span class="c-fn">build_connector_meta</span>(self, scheduler_output):
+        <span class="c-key">return</span> self._lmcache_engine_impl.<span class="c-fn">build_connector_meta</span>(scheduler_output)
+
+    <span class="c-com"># ── 执行侧：同样是转发，但 Impl 里会做真正的搬运 ────────</span>
+    <span class="c-key">def</span> <span class="c-fn">start_load_kv</span>(self, forward_context):
+        self._lmcache_engine_impl.<span class="c-fn">start_load_kv</span>(forward_context)
+
+    <span class="c-key">def</span> <span class="c-fn">wait_for_layer_load</span>(self, layer_name):
+        <span class="c-com"># 返回 None 表示"不等"；返回 deferred 则引擎会等待它完成</span>
+        <span class="c-key">return</span> self._lmcache_engine_impl.<span class="c-fn">wait_for_layer_load</span>(layer_name)
+
+    <span class="c-key">def</span> <span class="c-fn">save_kv_layer</span>(self, layer_name, kv_layer, attn_metadata, **kwargs):
+        self._lmcache_engine_impl.<span class="c-fn">save_kv_layer</span>(layer_name, kv_layer, attn_metadata, **kwargs)
+
+    <span class="c-key">def</span> <span class="c-fn">wait_for_save</span>(self):
+        <span class="c-key">return</span> self._lmcache_engine_impl.<span class="c-fn">wait_for_save</span>()
+
+    <span class="c-key">def</span> <span class="c-fn">register_kv_caches</span>(self, kv_caches: <span class="c-ty">dict</span>[<span class="c-ty">str</span>, torch.Tensor]):
+        <span class="c-com"># 只在 worker 侧有效：把 KV cache 张量句柄交给 LMCache</span>
+        self._lmcache_engine_impl.<span class="c-fn">register_kv_caches</span>(kv_caches)</code></pre>
+</figure>
+
+<h2><span class="num">6.5</span>vllm_v1_adapter：真正干活的地方</h2>
+
+<p>这个文件是整条链路的心脏。它做四件事：<strong>持有引擎实例</strong>、<strong>维护 per-request 状态</strong>、<strong>拼装 LoadSpec/SaveSpec</strong>、<strong>把 vLLM 的数据结构翻译成 LMCache 的调用</strong>。</p>
+
+<figure class="code">
+<figcaption><span class="path">vllm/distributed/kv_transfer/kv_connector/v1/lmcache_integration/vllm_v1_adapter.py</span><span class="sub">结构摘要 · 保留真实类名与调用关系</span></figcaption>
+<pre><code><span class="c-key">from</span> lmcache <span class="c-key">import</span> LMCacheEngine, LMCacheEngineBuilder
+<span class="c-key">from</span> lmcache.integration.vllm.utils <span class="c-key">import</span> create_lmcache_metadata, ENGINE_NAME
+
+<span class="c-key">class</span> <span class="c-ty">LMCacheConnectorV1Impl</span>:
+    <span class="c-key">def</span> <span class="c-fn">__init__</span>(self, vllm_config, role, connector, kv_cache_config):
+        self._role = role
+        <span class="c-com"># 从 vLLM 配置 + 模型信息生成 LMCache 需要的元数据</span>
+        <span class="c-com"># （模型名、层数、KV 形状、dtype、world_size、chunk_size 等）</span>
+        metadata = <span class="c-fn">create_lmcache_metadata</span>(vllm_config)
+        <span class="c-com"># 拿到（或创建）本进程的 LMCache 引擎实例</span>
+        self.lmcache_engine: LMCacheEngine = \
+            LMCacheEngineBuilder.<span class="c-fn">get_or_create</span>(ENGINE_NAME, config, metadata)
+        <span class="c-com"># per-request 状态：LoadSpec / SaveSpec 累积在这里</span>
+        self._request_trackers: <span class="c-ty">dict</span>[<span class="c-ty">str</span>, RequestTracker] = {}
+
+    <span class="c-com"># ══════ 调度侧 ══════</span>
+    <span class="c-key">def</span> <span class="c-fn">get_num_new_matched_tokens</span>(self, request, num_computed_tokens):
+        <span class="c-com"># 把请求的 token 拼出来（prompt + 已生成）</span>
+        tokens = <span class="c-fn">list</span>(request.prompt_token_ids) + <span class="c-fn">list</span>(request.output_token_ids)
+        <span class="c-com"># ★ 只查不搬：返回能命中的连续前缀长度</span>
+        num_hit = self.lmcache_engine.<span class="c-fn">lookup</span>(tokens)
+        <span class="c-key">return</span> num_hit, <span class="c-key">False</span>       <span class="c-com"># False = 不需要异步等待</span>
+
+    <span class="c-key">def</span> <span class="c-fn">update_state_after_alloc</span>(self, request, blocks, num_external_tokens):
+        <span class="c-com"># 记录这个请求要加载多少 token、加载到哪些 block 上</span>
+        tracker = self._request_trackers.<span class="c-fn">setdefault</span>(request.request_id, RequestTracker())
+        tracker.<span class="c-fn">add_load_spec</span>(<span class="c-fn">LoadSpec</span>(
+            vllm_cached_tokens=num_external_tokens,
+            kv_caches=blocks,               <span class="c-com"># ← 物理 block 号，搬运时的目标地址</span>
+            token_ids=...,                  <span class="c-com"># ← 用于校验，防串味</span>
+        ))
+
+    <span class="c-key">def</span> <span class="c-fn">build_connector_meta</span>(self, scheduler_output):
+        <span class="c-com"># 把本步所有请求的 load/save 计划打包下发</span>
+        <span class="c-key">return</span> <span class="c-fn">LMCacheConnectorMetadata</span>(requests={
+            rid: t.to_meta() <span class="c-key">for</span> rid, t <span class="c-key">in</span> self._request_trackers.<span class="c-fn">items</span>()})
+
+    <span class="c-com"># ══════ 执行侧 ══════</span>
+    <span class="c-key">def</span> <span class="c-fn">register_kv_caches</span>(self, kv_caches):
+        <span class="c-com"># 把 vLLM 的 KV cache 张量登记进 LMCache（建立逻辑层 → 张量视图的映射）</span>
+        self.lmcache_engine.<span class="c-fn">register_kv_caches</span>(kv_caches)
+
+    <span class="c-key">def</span> <span class="c-fn">start_load_kv</span>(self, forward_context):
+        <span class="c-com"># 遍历本步的 LoadSpec，逐个触发 retrieve</span>
+        <span class="c-key">for</span> spec <span class="c-key">in</span> self._load_specs:
+            self.lmcache_engine.<span class="c-fn">retrieve</span>(
+                tokens=spec.token_ids, mask=<span class="c-key">None</span>,
+                kvcaches=spec.kv_caches,      <span class="c-com"># ← 目标显存 block</span>
+                slot_mapping=spec.slot_mapping,
+                vllm_cached_tokens=spec.vllm_cached_tokens)
+
+    <span class="c-key">def</span> <span class="c-fn">save_kv_layer</span>(self, layer_name, kv_layer, attn_metadata, **kwargs):
+        <span class="c-com"># layerwise 模式下，每算完一层就存这一层（带上 layer_name 定位是第几层）</span>
+        self.lmcache_engine.<span class="c-fn">store</span>(tokens=..., kvcaches=..., layer_name=layer_name, ...)
+
+    <span class="c-key">def</span> <span class="c-fn">wait_for_save</span>(self):
+        <span class="c-com"># 非 layerwise：在这里一次性把整段 KV 存走</span>
+        <span class="c-com"># 通过 CacheOp / deferred 机制等待异步存取完成</span>
+        <span class="c-key">return</span> <span class="c-fn">KVConnectorOutput</span>(...)</code></pre>
+</figure>
+
+<div class="note warn">
+  <span class="t">上面是结构摘要，不是可复制粘贴的原文</span>
+  vLLM 的 connector 接口在 0.8 → 0.9 → 0.10 → … 之间改过多次（参数名、是否返回 deferred、meta 的字段）。
+  我保留了<strong>真实存在的类名与方法名</strong>（<code>LMCacheConnectorV1</code>、<code>LMCacheConnectorV1Impl</code>、
+  <code>register_kv_caches</code>、<code>get_num_new_matched_tokens</code>、<code>LoadSpec</code> 等），
+  但省略了参数细节。请以你安装版本的实际文件为准。
+</div>
+
+<h2><span class="num">6.6</span>kv_role：三种角色是什么意思</h2>
+
+<table class="tbl">
+  <thead><tr><th><code>kv_role</code></th><th>含义</th><th>典型场景</th><th>LMCache 下的行为</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>kv_producer</code></td>
+      <td>只负责把算好的 KV <strong>送出去</strong>（保存）</td>
+      <td>分离式部署里的 prefill 实例</td>
+      <td>只走 save 路径</td>
+    </tr>
+    <tr>
+      <td><code>kv_consumer</code></td>
+      <td>只负责<strong>接收</strong> KV（加载）</td>
+      <td>分离式部署里的 decode 实例</td>
+      <td>只走 load 路径</td>
+    </tr>
+    <tr>
+      <td><code>kv_both</code></td>
+      <td>既能存也能取（双向）</td>
+      <td><strong>LMCache 的典型配置</strong>：同一实例先缓存、后续请求复用</td>
+      <td>两条路径都开；命中即复用，算完即存</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <span class="t">为什么 LMCache 用 kv_both</span>
+  LMCache 的定位不是「在实例之间搬 KV」（那是 NIXL / disaggregated prefill 的目标），
+  而是「给本实例加一层缓存」。所以它要能存（第一次请求算完存起来）也能取（后续请求命中）。
+</div>
+
+<h2><span class="num">6.7</span>引擎侧到底被改了什么</h2>
+
+<p>这是很多人好奇的点：vLLM 为了支持外部 KV 连接器，在引擎里插了哪些钩子？下面按执行顺序列出。</p>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 470" role="img" aria-label="引擎中的连接器钩子时序">
+  <text class="ttl" x="24" y="30">一个推理步（step）内，连接器被调用的顺序</text>
+
+  <!-- 调度阶段 -->
+  <rect x="24" y="44" width="952" height="150" rx="9" fill="#141c26" stroke="#5ac8fa" stroke-dasharray="5 4"/>
+  <text class="lbl" x="40" y="68" fill="#5ac8fa">Scheduler.schedule()（EngineCore 进程）</text>
+
+  <rect x="40" y="80" width="290" height="46" rx="6" fill="#182933" stroke="#3a4757"/>
+  <text class="mono" x="52" y="98">get_num_new_matched_tokens()</text>
+  <text class="lbl2" x="52" y="116">→ LMCacheEngine.lookup(tokens)</text>
+
+  <rect x="346" y="80" width="290" height="46" rx="6" fill="#182933" stroke="#3a4757"/>
+  <text class="mono" x="358" y="98">update_state_after_alloc()</text>
+  <text class="lbl2" x="358" y="116">记录 LoadSpec / SaveSpec</text>
+
+  <rect x="652" y="80" width="306" height="46" rx="6" fill="#182933" stroke="#3a4757"/>
+  <text class="mono" x="664" y="98">build_connector_meta()</text>
+  <text class="lbl2" x="664" y="116">打包成 meta 随 SchedulerOutput 下发</text>
+
+  <rect x="40" y="136" width="918" height="46" rx="6" fill="#101820" stroke="#3a4757"/>
+  <text class="lbl2" x="54" y="156">设计意图：让「能省多少」的决策发生在<tspan fill="#fff">分配显存之前</tspan>。这样 vLLM 可以少分配 block、少排 batch，避免「先按全量分配再发现能省」的浪费。</text>
+  <text class="lbl2" x="54" y="174">代价：调度器需要多一次跨进程的查询（若引擎不在同进程），所以 lookup 必须极快——这也是 LMCache 只查 key 不读数据的原因。</text>
+
+  <!-- 执行阶段 -->
+  <rect x="24" y="206" width="952" height="192" rx="9" fill="#1b1417" stroke="#f97362" stroke-dasharray="5 4"/>
+  <text class="lbl" x="40" y="230" fill="#f97362">Worker 执行（模型进程）</text>
+
+  <rect x="40" y="242" width="290" height="46" rx="6" fill="#20181b" stroke="#3a4757"/>
+  <text class="mono" x="52" y="260">start_load_kv(forward_context)</text>
+  <text class="lbl2" x="52" y="278">发起加载（可能异步）</text>
+
+  <rect x="346" y="242" width="290" height="46" rx="6" fill="#20181b" stroke="#3a4757"/>
+  <text class="mono" x="358" y="260">forward() 逐层执行</text>
+  <text class="lbl2" x="358" y="278">每层前后插入 layerwise 钩子</text>
+
+  <rect x="652" y="242" width="306" height="46" rx="6" fill="#20181b" stroke="#3a4757"/>
+  <text class="mono" x="664" y="260">wait_for_save()</text>
+  <text class="lbl2" x="664" y="278">返回 KVConnectorOutput</text>
+
+  <rect x="40" y="298" width="918" height="44" rx="6" fill="#101820" stroke="#3a4757"/>
+  <text class="mono" x="54" y="316">layerwise 时：wait_for_layer_load(layer_name) → compute(layer) → save_kv_layer(layer_name, ...)</text>
+  <text class="lbl2" x="54" y="334">每层循环一次；非 layerwise 时这两个钩子不产生实际工作</text>
+
+  <rect x="40" y="352" width="918" height="36" rx="6" fill="#241c14" stroke="#ffb86b"/>
+  <text class="lbl2" x="54" y="375">KVConnectorOutput 会被放回 ModelRunnerOutput，最终回到调度器，用于状态回收与请求完成判定。</text>
+
+  <!-- 容错 -->
+  <rect x="24" y="412" width="952" height="48" rx="8" fill="#1b1417" stroke="#ff6b6b"/>
+  <text class="lbl" x="40" y="434" fill="#ff6b6b">容错设计：连接器抛异常时，vLLM 会把它标记为「不可用」并降级为普通执行（不会让整个服务崩掉）。</text>
+  <text class="lbl2" x="40" y="452">所以当你看到「本来该命中却没命中」，第一件事是查日志里有没有连接器异常被吞掉的记录。</text>
+</svg>
+<figcaption><b>图 6-2</b> 引擎侧的钩子时序。左边是「决策」，右边是「执行」，中间靠 connector meta 传递计划。</figcaption>
+</figure>
+
+<h2><span class="num">6.8</span>配置项清单</h2>
+<table class="tbl">
+  <thead><tr><th>配置</th><th>位置</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>kv_connector</code></td><td><code>KVTransferConfig</code></td><td>固定填 <code>"LMCacheConnectorV1"</code>（由 LMCache 注册）</td></tr>
+    <tr><td><code>kv_role</code></td><td><code>KVTransferConfig</code></td><td><code>kv_both</code> / <code>kv_producer</code> / <code>kv_consumer</code></td></tr>
+    <tr><td><code>kv_connector_extra_config</code></td><td><code>KVTransferConfig</code></td><td>透传给连接器的额外参数（如兼容性开关）</td></tr>
+    <tr><td><code>kv_connector_module_path</code></td><td><code>KVTransferConfig</code></td><td>从任意模块路径加载连接器类（自定义连接器用）</td></tr>
+    <tr><td><code>--kv-transfer-config</code></td><td>CLI</td><td>以上配置的 JSON 入口</td></tr>
+    <tr><td><code>LMCACHE_CONFIG_FILE</code></td><td>环境变量</td><td>指向 LMCache 的 YAML 配置（chunk_size、分层、pinned 等）</td></tr>
+    <tr><td><code>LMCACHE_USE_EXPERIMENTAL</code></td><td>环境变量</td><td>启用新版（v1）适配路径</td></tr>
+    <tr><td><code>VLLM_USE_V1</code></td><td>环境变量</td><td>选择 v0/v1 引擎；LMCache 主要面向 v1 的 connector 框架</td></tr>
+  </tbody>
+</table>
+
+<div class="note tip">
+  <span class="t">注册机制为什么重要</span>
+  <code>register_connector</code> 让「连接器名字 → 实现类」的映射可以由<strong>第三方包</strong>注册。
+  这就是为什么 LMCache 不需要改 vLLM 源码：vLLM 只提供框架和抽象基类，LMCache 通过注册把自己插进去。
+  想写自己的连接器，照抄这个套路即可。
+</div>
+
+<h2><span class="num">6.9</span>版本差异与排错</h2>
+<div class="grid c2">
+  <div class="card">
+    <h4>常见版本差异</h4>
+    <ul>
+      <li>连接器文件位置：早期在 <code>vllm/distributed/kv_transfer/kv_connector/</code>，后来加了 <code>v1/</code> 子目录。</li>
+      <li>LMCache 侧提供过 <code>lmcache_connector_v1_085.py</code> 这类版本专用实现，说明接口变过。</li>
+      <li>是否支持 <code>register_kv_caches</code>、返回值是否需要 deferred 对象，随版本不同。</li>
+      <li>v0 引擎用 <code>lmcache/integration/vllm/vllm_adapter.py</code>（旧路径），与 v1 完全不同。</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>排错清单</h4>
+    <ol>
+      <li>日志里有没有 <code>LMCacheConnectorV1</code> 的初始化记录？没有 = 配置没生效。</li>
+      <li>连接器有没有抛异常被降级？搜日志里的 connector 相关 warning。</li>
+      <li>命中数是不是 chunk_size 的整数倍？不是 = 哈希粒度不匹配。</li>
+      <li>开了 APC（<code>enable_prefix_caching</code>）吗？与 LMCache 的交互要留意。</li>
+      <li>TP &gt; 1 时，每个 rank 的 <code>worker_id</code> 不同，缓存天然按 rank 隔离——期望的命中率要按单 rank 算。</li>
+    </ol>
+  </div>
+</div>
+
+<div class="pager">
+  <a href="05-ipc-shm-pickle.html">← 上一章：IPC / SHM / Pickle</a>
+  <a class="next" href="07-npu-ipc-stack.html">下一章：NPU/CUDA IPC 层级 →</a>
+</div>
+
+<footer>LMCache 图解讲义 · 06 vLLM 集成</footer>
+</main>
+</body>
+</html>

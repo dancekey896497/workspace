@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LMCache 图解讲义 · 目录</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">⚡ LMCache 图解讲义</span>
+  <nav>
+    <a href="index.html" class="active">目录</a>
+    <a href="01-basics.html">基础概念</a>
+    <a href="02-components.html">组件组成</a>
+    <a href="03-dataflow.html">数据流</a>
+    <a href="04-lmcache-ascend.html">LMCache-Ascend</a>
+    <a href="05-ipc-shm-pickle.html">IPC / SHM / Pickle</a>
+    <a href="06-vllm-connector.html">vLLM 集成</a>
+    <a href="07-npu-ipc-stack.html">NPU/CUDA IPC 层级</a>
+    <a href="99-reference.html">代码索引</a>
+  </nav>
+</header>
+
+<main class="wrap">
+
+<h1>LMCache 图解讲义</h1>
+<p class="lead">
+  从「KV Cache 是什么」讲到「CUDA IPC 的 handle 怎么跨进程传」，全程配图。<br>
+  面向完全没接触过 L1/L2 分层、也没读过 LMCache 源码的读者。
+</p>
+
+<div class="note">
+  <span class="t">先给你一张全景图</span>
+  一句话概括本讲义要讲的东西：<br>
+  <strong>vLLM 把 KV Cache 放在 GPU/NPU 显存里（L1）；LMCache 把它搬到 CPU 内存（L1）、本地盘（L2）、远端存储（L3）去，让下一次请求能直接「捡回来」；LMCache-Ascend 是让这套搬运逻辑在昇腾 NPU 上跑起来的适配层。</strong>
+</div>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 430" role="img" aria-label="LMCache 全景图">
+  <defs>
+    <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 z" fill="#5ac8fa"/>
+    </marker>
+    <marker id="ar2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 z" fill="#a78bfa"/>
+    </marker>
+  </defs>
+
+  <!-- vLLM 引擎 -->
+  <rect x="30" y="26" width="290" height="150" rx="10" fill="#1b1417" stroke="#f97362" stroke-width="1.6"/>
+  <text class="ttl" x="46" y="50">vLLM 推理引擎（GPU / NPU 显存）</text>
+  <rect x="50" y="64" width="250" height="42" rx="7" fill="#20181b" stroke="#3a4757"/>
+  <text class="lbl" x="62" y="82">Paged KV Cache（分页显存池）</text>
+  <text class="lbl2" x="62" y="97">每个 block 存 16 个 token 的 K/V</text>
+  <rect x="50" y="114" width="250" height="42" rx="7" fill="#20181b" stroke="#3a4757"/>
+  <text class="lbl" x="62" y="132">Attention 计算</text>
+  <text class="lbl2" x="62" y="147">算子直接读写上面这块显存</text>
+
+  <!-- LMCache 中间层 -->
+  <rect x="365" y="16" width="300" height="180" rx="10" fill="#141c26" stroke="#5ac8fa" stroke-width="1.8"/>
+  <text class="ttl" x="381" y="40" fill="#5ac8fa">LMCache（KV Cache 中间层）</text>
+  <rect x="383" y="54" width="264" height="34" rx="7" fill="#182933" stroke="#3a4757"/>
+  <text class="lbl" x="394" y="75">① 查表：这段 prompt 缓存过吗？</text>
+  <rect x="383" y="94" width="264" height="34" rx="7" fill="#182933" stroke="#3a4757"/>
+  <text class="lbl" x="394" y="115">② 搬运：显存 ↔ 内存 / 磁盘 / 远端</text>
+  <rect x="383" y="134" width="264" height="48" rx="7" fill="#182933" stroke="#3a4757"/>
+  <text class="lbl" x="394" y="153">③ 序列化：pickle / 共享内存 / IPC</text>
+  <text class="lbl2" x="394" y="170">把「张量」变成「能出进程的字节」</text>
+
+  <!-- 存储层级 -->
+  <rect x="710" y="16" width="264" height="180" rx="10" fill="#121a16" stroke="#7dd3a0" stroke-width="1.6"/>
+  <text class="ttl" x="726" y="40" fill="#7dd3a0">存储层级（越往下越大越慢）</text>
+  <rect x="728" y="54" width="228" height="34" rx="7" fill="#16201a" stroke="#3a4757"/>
+  <text class="lbl" x="739" y="75">L1 · CPU DRAM（pin memory）</text>
+  <rect x="728" y="94" width="228" height="34" rx="7" fill="#16201a" stroke="#3a4757"/>
+  <text class="lbl" x="739" y="115">L2 · 本地 SSD / NVMe</text>
+  <rect x="728" y="134" width="228" height="48" rx="7" fill="#16201a" stroke="#3a4757"/>
+  <text class="lbl" x="739" y="153">L3 · 远端 / 其他实例</text>
+  <text class="lbl2" x="739" y="170">LMCache server · Mooncake · NIXL</text>
+
+  <!-- 连线 -->
+  <path d="M320,100 L363,100" stroke="#5ac8fa" stroke-width="1.8" marker-end="url(#ar)"/>
+  <path d="M665,60 L708,60" stroke="#a78bfa" stroke-width="1.8" marker-end="url(#ar2)"/>
+  <path d="M708,110 L667,110" stroke="#a78bfa" stroke-width="1.8" marker-end="url(#ar2)"/>
+
+  <!-- 底部：三个协议 -->
+  <rect x="30" y="230" width="944" height="170" rx="10" fill="#171420" stroke="#ff9ecb" stroke-width="1.6"/>
+  <text class="ttl" x="46" y="256" fill="#ff9ecb">搬运过程中用到的三个底层机制（本讲义第 5 章详解）</text>
+
+  <rect x="50" y="272" width="290" height="110" rx="8" fill="#1d1826" stroke="#3a4757"/>
+  <text class="ttl" x="66" y="296" fill="#ff9ecb">CUDA / NPU IPC</text>
+  <text class="lbl" x="66" y="318">同机跨进程共享「显存」</text>
+  <text class="lbl2" x="66" y="336">cudaIpcGetMemHandle → handle</text>
+  <text class="lbl2" x="66" y="353">另一个进程 open 后拿到指针</text>
+  <text class="lbl2" x="66" y="370">零拷贝，走 NVLink/PCIe/C2C</text>
+
+  <rect x="355" y="272" width="290" height="110" rx="8" fill="#16221f" stroke="#3a4757"/>
+  <text class="ttl" x="371" y="296" fill="#7ce0d3">SHM 共享内存</text>
+  <text class="lbl" x="371" y="318">同机跨进程共享「内存」</text>
+  <text class="lbl2" x="371" y="336">/dev/shm 一个文件或匿名 fd</text>
+  <text class="lbl2" x="371" y="353">mmap 到各自地址空间</text>
+  <text class="lbl2" x="371" y="370">不经过内核拷贝、不经网卡</text>
+
+  <rect x="660" y="272" width="298" height="110" rx="8" fill="#241c14" stroke="#3a4757"/>
+  <text class="ttl" x="676" y="296" fill="#ffb86b">Pickle 序列化</text>
+  <text class="lbl" x="676" y="318">把「对象」变成「字节流」</text>
+  <text class="lbl2" x="676" y="336">pickle.dumps / torch.save</text>
+  <text class="lbl2" x="676" y="353">负责「元数据 + 形状 + dtype」</text>
+  <text class="lbl2" x="676" y="370">本身不搬运显存，只搬运描述</text>
+
+  <text class="lbl2" x="46" y="420">读图要点：上面一排是「数据和它的家」，下面一排是「把它搬来搬去的三种手段」。LMCache 的复杂度几乎全部来自这两排之间的匹配问题。</text>
+</svg>
+<figcaption>
+  <b>图 0-1</b> 讲义全景。上排：KV Cache 放在哪、谁在用；下排：跨进程/跨机搬运它需要的三种机制。
+  整份讲义就是围绕这张图逐个放大。
+</figcaption>
+</figure>
+
+<h2><span class="num">§0</span>这个工作区里没有什么</h2>
+<div class="note warn">
+  <span class="t">重要前提</span>
+  你给的工作区 <code>vllm_base</code> 里<strong>没有</strong> vLLM / LMCache 的源码副本（只有我这次写入的讲义文件）。
+  所以本讲义中的代码片段来自两个开源仓库的公开代码路径，按「文件路径 + API 名字」组织，
+  <strong>是对真实代码结构的讲解，不是从本地文件里抓的</strong>。<br>
+  另外本次会话的网络只能访问 <code>github.com</code>，<code>raw.githubusercontent.com</code> / <code>docs.lmcache.ai</code> / CDN
+  都被拒绝解析，所以无法逐行核对最新 main 分支。凡是我标记
+  <span class="tag acc">版本相关</span> 的地方，请以你本地实际安装版本的代码为准。
+</div>
+
+<h2><span class="num">§1</span>八章内容索引</h2>
+<div class="toc">
+  <a href="01-basics.html">
+    <div class="n">01</div>
+    <div class="t">基础概念：KV Cache 与 L1/L2/L3</div>
+    <div class="d">Prefill 和 Decode 的区别、KV Cache 为什么能省算力、显存为什么总是爆、什么叫分层缓存 L1/L2/L3、LMCache 到底是一层什么东西。</div>
+  </a>
+  <a href="02-components.html">
+    <div class="n">02</div>
+    <div class="t">LMCache 组件组成</div>
+    <div class="d">CacheEngine / StorageManager / TokenDatabase / Allocator / Backend / Connector / Serializer / Server 逐个拆解，附仓库目录地图。</div>
+  </a>
+  <a href="03-dataflow.html">
+    <div class="n">03</div>
+    <div class="t">数据流：存与取的全过程</div>
+    <div class="d">一次请求从调度器查命中，到显存→内存→磁盘→远端，再到命中后回填显存。含 layerwise 流水线时序图。</div>
+  </a>
+  <a href="04-lmcache-ascend.html">
+    <div class="n">04</div>
+    <div class="t">LMCache-Ascend 起什么作用</div>
+    <div class="d">昇腾 NPU 适配层：运行期 patch 机制、替换了哪些组件、哪些是 NPU 独有难点（算子、pin memory、RDMA、HCCL）。</div>
+  </a>
+  <a href="05-ipc-shm-pickle.html">
+    <div class="n">05</div>
+    <div class="t">IPC / SHM / Pickle 怎么运作</div>
+    <div class="d">三种机制各自解决什么问题、完整调用序列、在 LMCache 里分别出现在哪个环节、常见坑。</div>
+  </a>
+  <a href="06-vllm-connector.html">
+    <div class="n">06</div>
+    <div class="t">vLLM 里的 LMCache 相关组件</div>
+    <div class="d">LMCacheConnectorV1、vllm_v1_adapter、EngineCore/Worker 侧回调、KVTransferConfig、kv_role 含义、引擎改动点。</div>
+  </a>
+  <a href="07-npu-ipc-stack.html">
+    <div class="n">07</div>
+    <div class="t">IPC 的层级：从驱动到应用</div>
+    <div class="d">CUDA 侧与 torch-npu 侧逐层对照：硬件 → 驱动 → Runtime → PyTorch → 分布式 → 应用，以及每一层具体是谁在干活。</div>
+  </a>
+  <a href="99-reference.html">
+    <div class="n">99</div>
+    <div class="t">代码索引与术语表</div>
+    <div class="d">本讲义引用到的所有文件路径、API 名字、环境变量、配置项，以及外部链接，方便你回源码核对。</div>
+  </a>
+</div>
+
+<h2><span class="num">§2</span>怎么用这份讲义</h2>
+<ol>
+  <li><strong>完全不懂 KV Cache</strong>：老老实实从 <a href="01-basics.html">01 基础概念</a> 开始，别跳。</li>
+  <li><strong>只想搞懂 LMCache 怎么接进 vLLM</strong>：<a href="02-components.html">02</a> → <a href="03-dataflow.html">03</a> → <a href="06-vllm-connector.html">06</a>。</li>
+  <li><strong>被 IPC / 共享内存 / pickle 卡住</strong>：<a href="05-ipc-shm-pickle.html">05</a> → <a href="07-npu-ipc-stack.html">07</a>。</li>
+  <li><strong>要在昇腾上跑</strong>：<a href="04-lmcache-ascend.html">04</a> → <a href="07-npu-ipc-stack.html">07</a>。</li>
+</ol>
+
+<div class="note tip">
+  <span class="t">读图约定</span>
+  本讲义所有图里颜色固定：<span class="tag gpu">红 = GPU/NPU 显存</span>
+  <span class="tag cpu">黄 = CPU 内存</span>
+  <span class="tag disk">绿 = 磁盘</span>
+  <span class="tag net">蓝 = 网络</span>
+  <span class="tag ipc">粉 = IPC</span>
+  <span class="tag shm">青 = SHM</span>
+  <span class="tag pk">橙 = 序列化</span>
+  <span class="tag acc">紫 = 远端/其他实例</span>
+</div>
+
+<div class="pager">
+  <span></span>
+  <a class="next" href="01-basics.html">下一章：基础概念 →</a>
+</div>
+
+<footer>
+  LMCache 图解讲义 · 共 8 章 · 纯静态 HTML，可离线阅读。代码路径以 LMCache <code>dev</code> 分支与 vLLM <code>main</code> 分支为参考。
+</footer>
+</main>
+</body>
+</html>

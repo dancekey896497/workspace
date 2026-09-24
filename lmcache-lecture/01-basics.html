@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>01 基础概念 · LMCache 图解讲义</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">⚡ LMCache 图解讲义</span>
+  <nav>
+    <a href="index.html">目录</a>
+    <a href="01-basics.html" class="active">基础概念</a>
+    <a href="02-components.html">组件组成</a>
+    <a href="03-dataflow.html">数据流</a>
+    <a href="04-lmcache-ascend.html">LMCache-Ascend</a>
+    <a href="05-ipc-shm-pickle.html">IPC / SHM / Pickle</a>
+    <a href="06-vllm-connector.html">vLLM 集成</a>
+    <a href="07-npu-ipc-stack.html">NPU/CUDA IPC 层级</a>
+    <a href="99-reference.html">代码索引</a>
+  </nav>
+</header>
+
+<main class="wrap">
+<h1>01 · 基础概念：KV Cache 与所谓 L1 / L2 / L3</h1>
+<p class="lead">这一章不出现任何 LMCache 代码。先把「缓存的是什么」「为什么要分层」这两件事说清楚，后面所有章节才有落脚点。</p>
+
+<h2><span class="num">1.1</span>先说 KV Cache 到底是什么东西</h2>
+
+<p>大模型推理分两个阶段，这两个阶段的硬件瓶颈完全不同，理解这一点是理解后面一切的前提。</p>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 400" role="img" aria-label="Prefill 与 Decode 两阶段对比">
+  <defs>
+    <marker id="a1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 z" fill="#5ac8fa"/>
+    </marker>
+  </defs>
+  <!-- Prefill -->
+  <rect x="20" y="24" width="460" height="230" rx="10" fill="#141c26" stroke="#5ac8fa" stroke-width="1.6"/>
+  <text class="ttl" x="36" y="50" fill="#5ac8fa">阶段一：Prefill（预填充）</text>
+  <text class="lbl" x="36" y="72">用户 prompt 一次性全部喂进去</text>
+  <rect x="36" y="86" width="428" height="40" rx="6" fill="#182933" stroke="#3a4757"/>
+  <text class="mono" x="48" y="111">[ 今天 天气 真好 我们 去 公园 玩 吧 ]  → 8 个 token</text>
+  <rect x="36" y="136" width="428" height="44" rx="6" fill="#20181b" stroke="#f97362"/>
+  <text class="lbl" x="48" y="155">对每层 Transformer 算出每个 token 的 K、V</text>
+  <text class="lbl2" x="48" y="171">这 8 个 token 的 K/V 全部写进显存 → 这就是 KV Cache</text>
+  <rect x="36" y="190" width="428" height="48" rx="6" fill="#182933" stroke="#3a4757"/>
+  <text class="lbl" x="48" y="209">瓶颈：<tspan fill="#f97362" font-weight="700">算力 / 矩阵乘</tspan>（compute-bound）</text>
+  <text class="lbl2" x="48" y="226">一次处理一大批 token，GPU 算得满满的</text>
+
+  <!-- Decode -->
+  <rect x="510" y="24" width="470" height="230" rx="10" fill="#1b1417" stroke="#f97362" stroke-width="1.6"/>
+  <text class="ttl" x="526" y="50" fill="#f97362">阶段二：Decode（逐字生成）</text>
+  <text class="lbl" x="526" y="72">每次只进来 1 个新 token</text>
+  <rect x="526" y="86" width="438" height="40" rx="6" fill="#20181b" stroke="#3a4757"/>
+  <text class="mono" x="538" y="111">新 token "我" → 只需要它的 K、V</text>
+  <rect x="526" y="136" width="438" height="44" rx="6" fill="#20181b" stroke="#f97362"/>
+  <text class="lbl" x="538" y="155">Attention 要把新 token 和<tspan fill="#fff" font-weight="700">历史所有 K/V</tspan>做注意力</text>
+  <text class="lbl2" x="538" y="171">所以历史 K/V 必须一直留在显存里，不能丢</text>
+  <rect x="526" y="190" width="438" height="48" rx="6" fill="#182933" stroke="#3a4757"/>
+  <text class="lbl" x="538" y="209">瓶颈：<tspan fill="#f2c14e" font-weight="700">显存带宽</tspan>（memory-bound）</text>
+  <text class="lbl2" x="538" y="226">每生成 1 个 token，要读完整份历史 KV，算力用不上 10%</text>
+
+  <!-- 结论 -->
+  <rect x="20" y="278" width="960" height="100" rx="10" fill="#121a16" stroke="#7dd3a0" stroke-width="1.6"/>
+  <text class="ttl" x="36" y="304" fill="#7dd3a0">由此推出两个重要结论</text>
+  <text class="lbl" x="36" y="328">① KV Cache 是「用显存换算力」：没有它，每个新 token 都要把所有历史 token 重算一遍，复杂度 O(n²) 变 O(n)。</text>
+  <text class="lbl" x="36" y="350">② Decode 阶段显存里躺着大量「历史 KV」，它们算过一次就不会再变，<tspan fill="#fff" font-weight="700">所以可以把它们搬走、复用、甚至跨请求共享</tspan>。</text>
+  <text class="lbl" x="36" y="372">LMCache 的全部动机，就来自结论 ②。</text>
+</svg>
+<figcaption><b>图 1-1</b> Prefill 拼算力，Decode 拼带宽。KV Cache 是 Decode 阶段的刚需，也是被浪费得最厉害的资源。</figcaption>
+</figure>
+
+<h3>为什么「缓存过」这件事能跨请求复用？</h3>
+<p>因为 Transformer 的 KV 只取决于<strong>从第 0 个 token 到当前位置的这段前缀</strong>。只要前缀一模一样，算出来的 KV 就逐比特一样（同样的模型、同样的精度、同样的并行切分）。</p>
+
+<p>而真实业务里前缀重复率高得惊人：</p>
+<ul>
+  <li>系统提示词（system prompt）：几千个 token，所有请求都一样。</li>
+  <li>Few-shot 示例、工具/函数定义、RAG 检索到的公共文档头。</li>
+  <li>多轮对话：第 2 轮的前缀 = 第 1 轮的全部内容。</li>
+  <li>Agent 循环：同一份长上下文反复喂给模型几十次。</li>
+</ul>
+
+<div class="note">
+  <span class="t">一句话记住</span>
+  在 vLLM 里，同一个<strong>前缀</strong>被再次命中时，那部分 KV 不需要重算，直接复用（这叫 <strong>Prefix Caching / APC</strong>）。
+  但这个复用范围<strong>只限单实例内部、且这个 block 还没被踢出显存</strong>。LMCache 干的事，就是把这个复用范围从
+  「单实例显存内」扩大到「跨实例、跨进程、跨机器、断电也能留」。
+</div>
+
+<h2><span class="num">1.2</span>KV Cache 长什么样：分页、block、chunk</h2>
+
+<p>vLLM 的核心创新是 <strong>PagedAttention</strong>：把 KV Cache 切成固定大小的 <strong>block</strong>，像操作系统管理内存页一样管理显存。这带来的直接好处是：<strong>KV Cache 可以被寻址、被切片、被搬运</strong>——LMCache 才能把它拷出来。</p>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 470" role="img" aria-label="Paged KV Cache 内存布局">
+  <!-- 显存池 -->
+  <rect x="24" y="26" width="600" height="300" rx="10" fill="#1b1417" stroke="#f97362" stroke-width="1.6"/>
+  <text class="ttl" x="40" y="52" fill="#f97362">GPU/NPU 显存里的 KV Cache 池</text>
+  <text class="mono" x="40" y="76">shape = [2, num_layers, num_blocks, block_size, num_kv_heads, head_dim]</text>
+  <text class="lbl2" x="40" y="95">2 = K 和 V 两份；其余维度逐层展开</text>
+
+  <!-- block 网格 -->
+  <g>
+    <!-- 行标签 -->
+    <text class="lbl2" x="40" y="128">layer 0 →</text>
+    <text class="lbl2" x="40" y="196">layer 1 →</text>
+    <text class="lbl2" x="40" y="264">layer 2 →</text>
+    <!-- 第0层 blocks -->
+    <rect x="118" y="110" width="76" height="30" rx="4" fill="#2a1d20" stroke="#f97362"/>
+    <text class="lbl2" x="132" y="130">block0</text>
+    <rect x="200" y="110" width="76" height="30" rx="4" fill="#2a1d20" stroke="#f97362"/>
+    <text class="lbl2" x="214" y="130">block1</text>
+    <rect x="282" y="110" width="76" height="30" rx="4" fill="#3a2a1d" stroke="#f2c14e"/>
+    <text class="lbl2" x="296" y="130">block2</text>
+    <rect x="364" y="110" width="76" height="30" rx="4" fill="#2a1d20" stroke="#3a4757"/>
+    <text class="lbl2" x="378" y="130">block3</text>
+    <text class="lbl2" x="452" y="130">……</text>
+    <!-- 第1层 -->
+    <rect x="118" y="178" width="76" height="30" rx="4" fill="#2a1d20" stroke="#f97362"/>
+    <text class="lbl2" x="132" y="198">block0</text>
+    <rect x="200" y="178" width="76" height="30" rx="4" fill="#2a1d20" stroke="#f97362"/>
+    <text class="lbl2" x="214" y="198">block1</text>
+    <rect x="282" y="178" width="76" height="30" rx="4" fill="#3a2a1d" stroke="#f2c14e"/>
+    <text class="lbl2" x="296" y="198">block2</text>
+    <rect x="364" y="178" width="76" height="30" rx="4" fill="#2a1d20" stroke="#3a4757"/>
+    <text class="lbl2" x="378" y="198">block3</text>
+    <text class="lbl2" x="452" y="198">……</text>
+    <!-- 第2层 -->
+    <rect x="118" y="246" width="76" height="30" rx="4" fill="#2a1d20" stroke="#f97362"/>
+    <text class="lbl2" x="132" y="266">block0</text>
+    <rect x="200" y="246" width="76" height="30" rx="4" fill="#2a1d20" stroke="#f97362"/>
+    <text class="lbl2" x="214" y="266">block1</text>
+    <rect x="282" y="246" width="76" height="30" rx="4" fill="#3a2a1d" stroke="#f2c14e"/>
+    <text class="lbl2" x="296" y="266">block2</text>
+    <rect x="364" y="246" width="76" height="30" rx="4" fill="#2a1d20" stroke="#3a4757"/>
+    <text class="lbl2" x="378" y="266">block3</text>
+    <text class="lbl2" x="452" y="266">……</text>
+  </g>
+  <text class="lbl2" x="40" y="310">每个 block 存 block_size（vLLM 默认 16）个 token 的 K/V。它是搬运的最小单位。</text>
+
+  <!-- 右侧：block_table -->
+  <rect x="648" y="26" width="328" height="300" rx="10" fill="#141c26" stroke="#5ac8fa" stroke-width="1.6"/>
+  <text class="ttl" x="664" y="52" fill="#5ac8fa">请求只持有「页码表」</text>
+  <text class="lbl" x="664" y="76">block_table（逻辑 → 物理）</text>
+  <rect x="664" y="88" width="296" height="96" rx="6" fill="#101820" stroke="#3a4757"/>
+  <text class="mono" x="676" y="110">req_A: [0, 1, 2]        ← 用了 3 个 block</text>
+  <text class="mono" x="676" y="132">req_B: [0, 1, 7, 9, 12] ← 前 2 个和 A 共享</text>
+  <text class="mono" x="676" y="154">req_C: [4, 5]</text>
+  <text class="lbl2" x="676" y="176">共享前缀的请求指向同一批物理 block</text>
+
+  <text class="lbl" x="664" y="212">这对 LMCache 意味着什么？</text>
+  <rect x="664" y="224" width="296" height="90" rx="6" fill="#101820" stroke="#3a4757"/>
+  <text class="lbl2" x="676" y="246">① 可以精确地「只搬前 N 个 block」</text>
+  <text class="lbl2" x="676" y="266">② 可以按 block 粒度做哈希索引</text>
+  <text class="lbl2" x="676" y="286">③ 搬运时要知道 block_table（散列）</text>
+  <text class="lbl2" x="676" y="306">    因为物理 block 不连续，不能当连续内存拷</text>
+
+  <!-- 底部 chunk 概念 -->
+  <rect x="24" y="346" width="952" height="106" rx="10" fill="#16221f" stroke="#7ce0d3" stroke-width="1.6"/>
+  <text class="ttl" x="40" y="372" fill="#7ce0d3">chunk_size：LMCache 复用的「逻辑粒度」</text>
+  <text class="lbl" x="40" y="396">LMCache 不看单个 block，而是把若干 token 归成一个 <tspan class="mono" fill="#a5e8ff">chunk</tspan>（常见取值 256），只对<tspan fill="#fff" font-weight="700">完整 chunk</tspan>做缓存与哈希。</text>
+  <text class="lbl" x="40" y="418">哈希键 = 该 chunk 的 token id 序列（滚动哈希）。所以 <tspan class="mono" fill="#a5e8ff">chunk_size</tspan> 必须和 vLLM 的 prefix-caching 粒度对齐，否则命中率会莫名其妙地低。</text>
+  <text class="lbl2" x="40" y="440">注意：chunk_size 与 block_size 是两个独立概念——前者是缓存粒度，后者是显存分配粒度。实现上要求 chunk_size 是 block_size 的整数倍。</text>
+</svg>
+<figcaption><b>图 1-2</b> 左边是显存池的真实布局（按层、按 block 排布），右边是请求持有的页码表。LMCache 要在这两者之间做搬运与索引。</figcaption>
+</figure>
+
+<div class="note warn">
+  <span class="t">新手最容易混的三个粒度</span>
+  <code>block_size</code>（vLLM 显存分配单位，通常 16）≠ <code>chunk_size</code>（LMCache 缓存/哈希单位，常见 256）≠ <code>page</code>（vLLM v1 里也把 block 叫 page，是同一个东西的不同叫法）。
+</div>
+
+<h2><span class="num">1.3</span>L1 / L2 / L3 到底指什么</h2>
+
+<p>先破除一个误解：<strong>L1/L2/L3 不是 LMCache 源码里的类名</strong>，而是社区（LMCache 官方博客、文档、论文）用来描述「KV Cache 存储层级」的通俗说法，借用的是 CPU 缓存层级的隐喻。它们描述的是「KV Cache 此刻放在哪种介质上」。</p>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 560" role="img" aria-label="KV Cache 三层存储层级">
+  <defs>
+    <marker id="a2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 z" fill="#8b98a5"/>
+    </marker>
+  </defs>
+
+  <!-- L1 区块 -->
+  <rect x="24" y="20" width="952" height="196" rx="10" fill="#1b1417" stroke="#f97362" stroke-width="1.8"/>
+  <text class="big" x="44" y="50" fill="#f97362">L1 · 最热的一层 —— 正在被算的 KV</text>
+  <rect x="44" y="66" width="440" height="128" rx="8" fill="#241a1d" stroke="#3a4757"/>
+  <text class="ttl" x="60" y="88">① 设备显存（HBM / Device Memory）</text>
+  <text class="lbl2" x="60" y="108">vLLM 的 Paged KV Cache 本体</text>
+  <text class="lbl2" x="60" y="126">容量：几十 GB（H20 96GB / A100 80GB）</text>
+  <text class="lbl2" x="60" y="144">带宽：1~3 TB/s（HBM）</text>
+  <text class="lbl2" x="60" y="162">延迟：百纳秒级</text>
+  <text class="lbl2" x="60" y="182">谁在用：Attention 算子</text>
+
+  <rect x="512" y="66" width="444" height="128" rx="8" fill="#241a1d" stroke="#3a4757"/>
+  <text class="ttl" x="528" y="88">② 主机内存（CPU DRAM，通常配 pin memory）</text>
+  <text class="lbl2" x="528" y="108">LMCache 把显存里的 KV 拷到这里常驻</text>
+  <text class="lbl2" x="528" y="126">容量：几百 GB ~ 数 TB</text>
+  <text class="lbl2" x="528" y="144">带宽：50~200 GB/s（PCIe / C2C / HCCS）</text>
+  <text class="lbl2" x="528" y="162">延迟：微秒级</text>
+  <text class="lbl2" x="528" y="182">为什么用 pinned：让 DMA 能直接搬，且可被网卡/RNIC 直接读</text>
+
+  <!-- 箭头 -->
+  <path d="M260,220 L260,252" stroke="#8b98a5" stroke-width="1.6" marker-end="url(#a2)"/>
+  <path d="M740,252 L740,220" stroke="#8b98a5" stroke-width="1.6" marker-end="url(#a2)"/>
+
+  <!-- L2 -->
+  <rect x="24" y="258" width="952" height="150" rx="10" fill="#121a16" stroke="#7dd3a0" stroke-width="1.8"/>
+  <text class="big" x="44" y="288" fill="#7dd3a0">L2 · 温层 —— 本地磁盘</text>
+  <rect x="44" y="302" width="912" height="92" rx="8" fill="#16201a" stroke="#3a4757"/>
+  <text class="lbl" x="60" y="324">本地 SSD / NVMe 上的 KV 文件（LMCache 叫 <tspan class="mono" fill="#a5e8ff">LocalDiskBackend</tspan>）</text>
+  <text class="lbl2" x="60" y="346">容量：TB 级，几乎不限   带宽：3~14 GB/s（NVMe Gen4/Gen5）   延迟：上百微秒</text>
+  <text class="lbl2" x="60" y="368">关键工程点：文件里不只是裸张量，还有 metadata（token 序列、形状、dtype）用于校验和索引</text>
+  <text class="lbl2" x="60" y="388">现实里 L2 常常是「兜底」：L1 装不下、又不能丢的 KV 落盘</text>
+
+  <path d="M260,412 L260,444" stroke="#8b98a5" stroke-width="1.6" marker-end="url(#a2)"/>
+  <path d="M740,444 L740,412" stroke="#8b98a5" stroke-width="1.6" marker-end="url(#a2)"/>
+
+  <!-- L3 -->
+  <rect x="24" y="450" width="952" height="96" rx="10" fill="#171420" stroke="#a78bfa" stroke-width="1.8"/>
+  <text class="big" x="44" y="480" fill="#a78bfa">L3 · 冷层 —— 远端 / 跨实例</text>
+  <rect x="44" y="494" width="912" height="42" rx="8" fill="#1d1826" stroke="#3a4757"/>
+  <text class="lbl" x="60" y="520">LMCache Server（独立进程/独立机器） · Mooncake Store · NIXL（跨实例 P2P） · 对象存储（S3 等） · Redis / Valkey</text>
+</svg>
+<figcaption><b>图 1-3</b> 三层介质。规律：越靠上越小越快越贵，越靠下越大越慢越便宜。LMCache 的价值就是让数据在这三层之间自动流动，而 vLLM 完全不用改模型代码。</figcaption>
+</figure>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 260" role="img" aria-label="三层特性对比">
+  <text class="ttl" x="24" y="30">容量 · 带宽 · 延迟的量级对照（数量级示意，不是精确值）</text>
+  <!-- 表头 -->
+  <text class="lbl" x="24" y="60">层级</text>
+  <text class="lbl" x="180" y="60">典型介质</text>
+  <text class="lbl" x="430" y="60">容量</text>
+  <text class="lbl" x="560" y="60">带宽</text>
+  <text class="lbl" x="710" y="60">首字节延迟</text>
+  <text class="lbl" x="870" y="60">相对成本</text>
+  <line x1="24" y1="70" x2="976" y2="70" stroke="#3a4757"/>
+
+  <text class="lbl" x="24" y="98" fill="#f97362">L1-显存</text>
+  <text class="lbl2" x="180" y="98">HBM / 昇腾 HBM</text>
+  <text class="lbl2" x="430" y="98">10¹ GB</text>
+  <text class="lbl2" x="560" y="98">10⁰ ~ 10¹ TB/s</text>
+  <text class="lbl2" x="710" y="98">~100 ns</text>
+  <text class="lbl2" x="870" y="98">最贵</text>
+  <line x1="24" y1="110" x2="976" y2="110" stroke="#2b3644"/>
+
+  <text class="lbl" x="24" y="138" fill="#f97362">L1-主机内存</text>
+  <text class="lbl2" x="180" y="138">DRAM + pin</text>
+  <text class="lbl2" x="430" y="138">10² GB</text>
+  <text class="lbl2" x="560" y="138">10¹ ~ 10² GB/s</text>
+  <text class="lbl2" x="710" y="138">~1 µs</text>
+  <text class="lbl2" x="870" y="138">便宜</text>
+  <line x1="24" y1="150" x2="976" y2="150" stroke="#2b3644"/>
+
+  <text class="lbl" x="24" y="178" fill="#7dd3a0">L2</text>
+  <text class="lbl2" x="180" y="178">NVMe SSD</text>
+  <text class="lbl2" x="430" y="178">10³ GB</text>
+  <text class="lbl2" x="560" y="178">10⁰ ~ 10¹ GB/s</text>
+  <text class="lbl2" x="710" y="178">~100 µs</text>
+  <text class="lbl2" x="870" y="178">很便宜</text>
+  <line x1="24" y1="190" x2="976" y2="190" stroke="#2b3644"/>
+
+  <text class="lbl" x="24" y="218" fill="#a78bfa">L3</text>
+  <text class="lbl2" x="180" y="218">远端内存 / 对象存储</text>
+  <text class="lbl2" x="430" y="218">10³ GB ~ PB</text>
+  <text class="lbl2" x="560" y="218">10⁻¹ ~ 10¹ GB/s</text>
+  <text class="lbl2" x="710" y="218">~1 ms</text>
+  <text class="lbl2" x="870" y="218">按量付费</text>
+
+  <text class="lbl2" x="24" y="248">读图方法：一次 8K token 的 KV 大概几十 MB 到几百 MB。用 100 MB 去除以上带宽，就知道各层「取回来要多久」——这决定了 LMCache 的收益能不能兑现。</text>
+</svg>
+<figcaption><b>图 1-4</b> 拿这张表算收益：命中 L1 省下的是「重算 8K token 的 prefill 时间」；命中 L3 则要先花几毫秒把数据拉回来，只有当重算成本远大于搬运成本时才划算。</figcaption>
+</figure>
+
+<h2><span class="num">1.4</span>没有 LMCache 时会怎样</h2>
+
+<div class="vs">
+  <div>
+    <h4>只用 vLLM 原生 Prefix Caching</h4>
+    <ul>
+      <li>KV 只能待在<strong>本实例显存</strong>里。</li>
+      <li>显存不够时按 LRU 直接<strong>丢弃</strong>，丢了就得重算。</li>
+      <li>重启进程 = 全部缓存清零。</li>
+      <li>两台机器之间的公共前缀<strong>无法共享</strong>，各算一遍。</li>
+      <li>长上下文场景显存被历史 KV 吃光，并发直线下降。</li>
+    </ul>
+  </div>
+  <div>
+    <h4>加上 LMCache 之后</h4>
+    <ul>
+      <li>显存腾不出来时，把 KV <strong>挪到 CPU 内存</strong>，显存立刻可用。</li>
+      <li>进程重启后可从磁盘/远端<strong>复活</strong>缓存。</li>
+      <li>多实例共享同一份 L3，公共前缀只算一次。</li>
+      <li>长上下文不再必须靠堆显存。</li>
+      <li>代价：显存↔内存↔磁盘的数据搬运开销，以及复杂度。</li>
+    </ul>
+  </div>
+</div>
+
+<div class="note ok">
+  <span class="t">收益的本质</span>
+  这是一道简单的不等式：<br>
+  <code>搬运这份 KV 的时间 &lt; 重算这份 KV 的时间</code> → 用缓存划算。<br>
+  例如 8K token 的 prefill 在 A100 上可能要 200ms，而 100MB 从 CPU 内存拷回显存只要 ~5ms。差了一个数量级，所以值得做。
+</div>
+
+<h2><span class="num">1.5</span>术语速查（这一章出现的）</h2>
+<table class="tbl">
+  <thead><tr><th>术语</th><th>含义</th><th>为什么重要</th></tr></thead>
+  <tbody>
+    <tr><td><code>KV Cache</code></td><td>每层 Transformer 缓存的 Key/Value 张量</td><td>Decode 阶段必须常驻，是显存最大占用者</td></tr>
+    <tr><td><code>Prefill</code></td><td>一次性处理整个 prompt，算力瓶颈</td><td>LMCache 主要省的就是这一步</td></tr>
+    <tr><td><code>Decode</code></td><td>逐 token 生成，带宽瓶颈</td><td>KV 在被持续读取</td></tr>
+    <tr><td><code>block / page</code></td><td>vLLM 的显存分配单位（默认 16 token）</td><td>KV 搬运和寻址的物理粒度</td></tr>
+    <tr><td><code>chunk_size</code></td><td>LMCache 的缓存与哈希粒度（常见 256 token）</td><td>决定命中率，需与 block_size 对齐</td></tr>
+    <tr><td><code>Prefix Caching (APC)</code></td><td>相同前缀复用 KV，vLLM 内建能力</td><td>LMCache 是它的超集，把范围扩到实例外</td></tr>
+    <tr><td><code>L1 / L2 / L3</code></td><td>KV 所在的介质层级：显存+内存 / 本地盘 / 远端</td><td>社区叫法，不是 API 名</td></tr>
+    <tr><td><code>pin memory</code></td><td>页锁定主机内存，可被 DMA / RDMA 直接访问</td><td>显存↔内存高速搬运的前提，第 5 章细讲</td></tr>
+  </tbody>
+</table>
+
+<div class="pager">
+  <a href="index.html">← 目录</a>
+  <a class="next" href="02-components.html">下一章：组件组成 →</a>
+</div>
+
+<footer>LMCache 图解讲义 · 01 基础概念</footer>
+</main>
+</body>
+</html>

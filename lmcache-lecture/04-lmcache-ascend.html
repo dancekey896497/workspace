@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>04 LMCache-Ascend · LMCache 图解讲义</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">⚡ LMCache 图解讲义</span>
+  <nav>
+    <a href="index.html">目录</a>
+    <a href="01-basics.html">基础概念</a>
+    <a href="02-components.html">组件组成</a>
+    <a href="03-dataflow.html">数据流</a>
+    <a href="04-lmcache-ascend.html" class="active">LMCache-Ascend</a>
+    <a href="05-ipc-shm-pickle.html">IPC / SHM / Pickle</a>
+    <a href="06-vllm-connector.html">vLLM 集成</a>
+    <a href="07-npu-ipc-stack.html">NPU/CUDA IPC 层级</a>
+    <a href="99-reference.html">代码索引</a>
+  </nav>
+</header>
+
+<main class="wrap">
+<h1>04 · LMCache-Ascend 起了什么作用</h1>
+<p class="lead">一句话：它是 LMCache 的「昇腾方言版」——把 LMCache 里所有跟 NVIDIA/CUDA 绑定的部分换成华为昇腾 NPU 的实现，其余逻辑保持不变。</p>
+
+<div class="note warn">
+  <span class="t">本章的证据边界（请务必先读）</span>
+  本次会话网络只能访问 <code>github.com</code>，<code>raw.githubusercontent.com</code>、<code>docs.lmcache.ai</code>、<code>docs.vllm.ai</code>、<code>hiascend.com</code>、DeepWiki 全部被拒绝解析，
+  因此<strong>无法读取 LMCache-Ascend 的实际源码</strong>。<br>
+  本章内容基于：① 该仓库 README 与官方博客/部署文档的公开描述（可点击章末链接核对）② LMCache 主仓库的结构 ③ 昇腾软件栈的公开信息。<br>
+  <strong>凡我标了 <span class="tag acc">需在机器上核实</span> 的具体类名/文件名，请以你环境里 <code>pip show -f lmcache-ascend</code> 的实际内容为准。</strong>
+  我不想用编造的路径冒充源码。
+</div>
+
+<h2><span class="num">4.1</span>它解决的到底是什么问题</h2>
+
+<p>LMCache 的代码里到处是「设备假设」：用 <code>torch.cuda</code> 判断设备、用 <code>cudaHostAlloc</code> 申请页锁定内存、用 CUDA kernel 做多层 KV 搬运、用 <code>cudaIpc*</code> 做跨进程共享。这些在昇腾 NPU 上统统不存在。</p>
+
+<div class="vs">
+  <div>
+    <h4>LMCache 主仓库（GPU 路径）</h4>
+    <ul>
+      <li>设备：<code>torch.cuda</code> / <code>cuda:0</code></li>
+      <li>页锁定内存：<code>cudaHostAlloc</code>，或 <code>torch.empty(pin_memory=True)</code></li>
+      <li>KV 搬运：<code>csrc/</code> 里的 CUDA kernel + <code>cudaMemcpyAsync</code></li>
+      <li>同步：<code>torch.cuda.Stream</code> / <code>Event</code></li>
+      <li>跨进程设备内存共享：<code>CUDA IPC</code>（<code>cudaIpcGetMemHandle</code>）</li>
+      <li>跨机：NCCL / RDMA + GPUDirect</li>
+    </ul>
+  </div>
+  <div>
+    <h4>昇腾 NPU 需要什么</h4>
+    <ul>
+      <li>设备：<code>torch.npu</code> / <code>npu:0</code>（<code>torch_npu</code> 提供）</li>
+      <li>页锁定内存：<code>torch_npu</code> 的 pin memory 能力，或退化为普通内存</li>
+      <li>KV 搬运：CANN 算子 / <code>torch_npu</code> 提供的搬运原语（NPU 版本 kernel）</li>
+      <li>同步：<code>torch.npu.Stream</code> / <code>Event</code></li>
+      <li>跨进程设备内存共享：<code>torch_npu</code> 的内存共享（IPC）实现</li>
+      <li>跨机：HCCL / 昇腾 RDMA 网卡 / Mooncake 的 Ascend transport</li>
+    </ul>
+  </div>
+</div>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 470" role="img" aria-label="LMCache-Ascend 的位置">
+  <defs>
+    <marker id="asc1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#a78bfa"/></marker>
+  </defs>
+
+  <!-- 上：推理引擎 -->
+  <rect x="24" y="16" width="952" height="86" rx="9" fill="#1b1417" stroke="#f97362" stroke-width="1.6"/>
+  <text class="ttl" x="40" y="40" fill="#f97362">推理引擎</text>
+  <rect x="40" y="50" width="290" height="42" rx="7" fill="#241a1d" stroke="#3a4757"/>
+  <text class="lbl" x="52" y="70">vLLM（GPU）</text>
+  <text class="lbl2" x="52" y="86">vllm + lmcache 主仓库</text>
+  <rect x="346" y="50" width="300" height="42" rx="7" fill="#241a1d" stroke="#a78bfa"/>
+  <text class="lbl" x="358" y="70">vLLM-Ascend（NPU）</text>
+  <text class="lbl2" x="358" y="86">vllm-ascend + LMCache-Ascend</text>
+  <rect x="662" y="50" width="296" height="42" rx="7" fill="#241a1d" stroke="#3a4757"/>
+  <text class="lbl" x="674" y="70">SGLang / 其他（NPU）</text>
+  <text class="lbl2" x="674" y="86">同样可通过 LMCache-Ascend 接入</text>
+
+  <!-- 中：LMCache-Ascend 层 -->
+  <rect x="24" y="118" width="952" height="150" rx="9" fill="#171420" stroke="#a78bfa" stroke-width="1.9"/>
+  <text class="ttl" x="40" y="144" fill="#a78bfa">LMCache-Ascend（本文主角）—— 一个「设备适配」补丁层</text>
+  <rect x="40" y="156" width="300" height="46" rx="7" fill="#1d1826" stroke="#3a4757"/>
+  <text class="lbl" x="52" y="176">不改 LMCache 的算法</text>
+  <text class="lbl2" x="52" y="194">切块/哈希/分层/淘汰逻辑原样复用</text>
+  <rect x="352" y="156" width="300" height="46" rx="7" fill="#1d1826" stroke="#3a4757"/>
+  <text class="lbl" x="364" y="176">只换「碰到设备」的实现</text>
+  <text class="lbl2" x="364" y="194">分配器 / 连接器 / 搬运算子</text>
+  <rect x="664" y="156" width="294" height="46" rx="7" fill="#1d1826" stroke="#3a4757"/>
+  <text class="lbl" x="676" y="176">通过运行期 patch 生效</text>
+  <text class="lbl2" x="676" y="194">检测到 NPU 才启用，GPU 环境不受影响</text>
+
+  <rect x="40" y="212" width="918" height="46" rx="7" fill="#101820" stroke="#3a4757"/>
+  <text class="lbl2" x="54" y="232">典型交互方式（与 GPU 侧完全一致）：vLLM-Ascend 用 <tspan class="mono" fill="#a5e8ff">--kv-transfer-config '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both"}'</tspan></text>
+  <text class="lbl2" x="54" y="250">也就是说：<tspan fill="#fff">从 vLLM 的视角看不出区别</tspan>，连接器名和角色语义都不变，变的只是连接器内部怎么搬数据。</text>
+
+  <!-- 下：底座 -->
+  <rect x="24" y="282" width="952" height="172" rx="9" fill="#141c26" stroke="#5ac8fa" stroke-width="1.6"/>
+  <text class="ttl" x="40" y="308" fill="#5ac8fa">昇腾软件栈（LMCache-Ascend 的依赖）</text>
+  <rect x="40" y="320" width="300" height="52" rx="7" fill="#182933" stroke="#3a4757"/>
+  <text class="lbl" x="52" y="340">LMCache 运行时（Python）</text>
+  <text class="lbl2" x="52" y="358">StorageManager / TokenDatabase / Backends</text>
+  <rect x="352" y="320" width="300" height="52" rx="7" fill="#182933" stroke="#3a4757"/>
+  <text class="lbl" x="364" y="340">torch_npu（PyTorch 适配层）</text>
+  <text class="lbl2" x="364" y="358">npu 设备 / 流 / pin memory / IPC</text>
+  <rect x="664" y="320" width="294" height="52" rx="7" fill="#182933" stroke="#3a4757"/>
+  <text class="lbl" x="676" y="340">CANN（算子 / 图 / Runtime）</text>
+  <text class="lbl2" x="676" y="358">ascendcl：内存、拷贝、事件、IPC</text>
+  <rect x="40" y="384" width="918" height="52" rx="7" fill="#182933" stroke="#3a4757"/>
+  <text class="lbl" x="52" y="404">昇腾驱动 + HCCS/C2C 互联 + HBM 显存 + RDMA 网卡（可选）</text>
+  <text class="lbl2" x="52" y="424">第 7 章会把这一列的每一层与 CUDA 侧逐层对照</text>
+</svg>
+<figcaption><b>图 4-1</b> LMCache-Ascend 夹在「LMCache 逻辑」和「torch_npu/CANN」之间，只负责设备方言翻译。它<b>不是</b>另一个 LMCache，也不改 KV 缓存的算法。</figcaption>
+</figure>
+
+<h2><span class="num">4.2</span>为什么要单独开一个仓库，而不是直接合并进主仓库</h2>
+<ol>
+  <li><strong>依赖冲突</strong>：昇腾适配需要 <code>torch_npu</code> 与特定版本的 CANN，这些在 GPU 环境里根本装不上。放在主仓库会污染依赖树。</li>
+  <li><strong>CI 成本</strong>：主仓库的 CI 跑在 NVIDIA 机器上，无法验证 NPU 路径。</li>
+  <li><strong>发布节奏</strong>：CANN/torch_npu 的版本节奏与 LMCache 不同步，需要独立发版与匹配表。</li>
+  <li><strong>「鸭子类型」的可行性</strong>：LMCache 的设备相关部分已经被抽象成若干可替换的类/函数，理论上可以整体替换——这正是它能做成独立仓库的前提。</li>
+</ol>
+
+<h2><span class="num">4.3</span>运作机制：运行期 patch（猴子补丁）</h2>
+
+<p>它的核心手段不是 fork 一份代码，而是<strong>在导入时把 LMCache 里若干「设备相关」的符号替换成 NPU 版本</strong>。这样主仓库能继续独立演进，补丁层只需要跟上被替换的那几个接口。<span class="tag acc">需在机器上核实</span>具体的 patch 模块名。</p>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 420" role="img" aria-label="运行期 patch 机制">
+  <defs>
+    <marker id="p1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#a78bfa"/></marker>
+  </defs>
+
+  <!-- 步骤 -->
+  <rect x="24" y="20" width="460" height="80" rx="8" fill="#171420" stroke="#a78bfa"/>
+  <text class="ttl" x="40" y="44" fill="#a78bfa">① import 时机</text>
+  <text class="lbl2" x="40" y="66">进程启动、vLLM 构造连接器之前，LMCache-Ascend 被导入</text>
+  <text class="lbl2" x="40" y="86">检测 <tspan class="mono" fill="#a5e8ff">torch_npu</tspan> 是否可导入 / 是否有 NPU 设备</text>
+
+  <path d="M486,60 L520,60" stroke="#a78bfa" stroke-width="1.6" marker-end="url(#p1)"/>
+
+  <rect x="524" y="20" width="452" height="80" rx="8" fill="#171420" stroke="#a78bfa"/>
+  <text class="ttl" x="540" y="44" fill="#a78bfa">② 替换符号</text>
+  <text class="lbl2" x="540" y="66">把「显存→主机」运输通道换成 NPU 版实现</text>
+  <text class="lbl2" x="540" y="86">例如 <tspan class="mono" fill="#a5e8ff">CreateGPUConnector</tspan> 在 NPU 环境返回 <tspan class="mono" fill="#a5e8ff">NPU 连接器</tspan></text>
+
+  <!-- 替换示意 -->
+  <rect x="24" y="120" width="952" height="150" rx="8" fill="#141c26" stroke="#5ac8fa"/>
+  <text class="ttl" x="40" y="146" fill="#5ac8fa">③ 替换发生在「接口边界」，所以上层完全无感</text>
+
+  <rect x="40" y="158" width="290" height="98" rx="7" fill="#101820" stroke="#3a4757"/>
+  <text class="lbl" x="52" y="180">LMCache 逻辑层（不替换）</text>
+  <text class="lbl2" x="52" y="200">cache_engine.py</text>
+  <text class="lbl2" x="52" y="218">storage_manager.py</text>
+  <text class="lbl2" x="52" y="236">token_database.py</text>
+  <text class="lbl2" x="52" y="254">backend 全部实现</text>
+
+  <rect x="346" y="158" width="290" height="98" rx="7" fill="#1b1417" stroke="#f97362"/>
+  <text class="lbl" x="358" y="180" fill="#f97362">设备相关层（被替换）</text>
+  <text class="mono" x="358" y="200">memory_management.Allocator</text>
+  <text class="mono" x="358" y="218">gpu_connector.Create*</text>
+  <text class="mono" x="358" y="236">utils 里的设备判断</text>
+  <text class="mono" x="358" y="254">csrc 的多层 KV 搬运 kernel</text>
+
+  <rect x="652" y="158" width="306" height="98" rx="7" fill="#171420" stroke="#a78bfa"/>
+  <text class="lbl" x="664" y="180" fill="#a78bfa">NPU 实现（LMCache-Ascend 提供）</text>
+  <text class="lbl2" x="664" y="200">基于 torch_npu / CANN 的等价实现</text>
+  <text class="lbl2" x="664" y="218">接口签名与被替换者保持一致</text>
+  <text class="lbl2" x="664" y="236">这样 StorageManager 的调用代码</text>
+  <text class="lbl2" x="664" y="254">一行都不用改</text>
+
+  <!-- 收益/代价 -->
+  <rect x="24" y="288" width="470" height="120" rx="8" fill="#121a16" stroke="#7dd3a0"/>
+  <text class="ttl" x="40" y="312" fill="#7dd3a0">好处</text>
+  <text class="lbl2" x="40" y="334">· 上游更新能快速跟进（只维护边界）</text>
+  <text class="lbl2" x="40" y="354">· 同一份 vLLM 配置在 GPU / NPU 上都能跑</text>
+  <text class="lbl2" x="40" y="374">· GPU 环境装了也不会被改坏（条件启用）</text>
+  <text class="lbl2" x="40" y="394">· 昇腾侧的 bug 与优化不污染主仓库</text>
+
+  <rect x="506" y="288" width="470" height="120" rx="8" fill="#1b1417" stroke="#f97362"/>
+  <text class="ttl" x="522" y="312" fill="#f97362">代价（排障时要有心理准备）</text>
+  <text class="lbl2" x="522" y="334">· 出问题时「你读的源码不是真正跑的代码」</text>
+  <text class="lbl2" x="522" y="354">· 上游一改接口，patch 就失效（版本耦合紧）</text>
+  <text class="lbl2" x="522" y="374">· 报错栈里混着两个包的帧，容易误判</text>
+  <text class="lbl2" x="522" y="394">· 排查第一步永远是：确认 patch 有没有生效</text>
+</svg>
+<figcaption><b>图 4-2</b> patch 的本质是「在接口边界换实现」。这解释了为什么 LMCache 主仓库那些「设备无关」的抽象（Allocator / Connector / Backend）如此重要——它们就是补丁的接缝。</figcaption>
+</figure>
+
+<div class="note tip">
+  <span class="t">排障第一招</span>
+  在 NPU 机器上跑之前，先确认补丁是否生效：打印 <code>type(lmcache_engine.gpu_connector)</code>，看是不是 NPU 版本；
+  再打印 <code>torch.npu.is_available()</code> 与 <code>torch.npu.device_count()</code>。
+  如果类型还是 GPU 版，说明导入顺序不对（补丁没被触发），而不是「NPU 性能差」。
+</div>
+
+<h2><span class="num">4.4</span>替换了哪些组件（按难度排序）</h2>
+
+<table class="tbl">
+  <thead><tr><th>组件</th><th>GPU 侧</th><th>NPU 侧要做什么</th><th>难度</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>设备识别</td>
+      <td><code>torch.cuda.is_available()</code>、<code>device="cuda"</code></td>
+      <td>换成 <code>torch.npu</code> 系列；所有硬编码 <code>cuda</code> 的地方都要能被 NPU 覆盖</td>
+      <td><span class="tag disk">低</span></td>
+    </tr>
+    <tr>
+      <td>内存分配器</td>
+      <td><code>PinMemoryAllocator</code>（<code>cudaHostAlloc</code>）</td>
+      <td>用 torch_npu 的 pin memory 能力；若某版本不支持，则退化为普通主机内存，<strong>性能会掉但功能可用</strong></td>
+      <td><span class="tag cpu">中</span></td>
+    </tr>
+    <tr>
+      <td>设备连接器</td>
+      <td><code>VLLMPagedMemGPUConnectorV2</code> 等</td>
+      <td>重写 <code>from_gpu</code>/<code>to_gpu</code>：按 NPU 的 KV 布局与搬运原语实现，处理分页散写</td>
+      <td><span class="tag gpu">高</span></td>
+    </tr>
+    <tr>
+      <td>搬运算子</td>
+      <td><code>csrc/</code> 里的 CUDA kernel</td>
+      <td>提供 NPU 版算子（CANN 自定义算子或 <code>torch_npu</code> 原语组合）。一次搬运多层 KV 的 kernel 是性能关键</td>
+      <td><span class="tag gpu">高</span></td>
+    </tr>
+    <tr>
+      <td>流与同步</td>
+      <td><code>torch.cuda.Stream/Event</code></td>
+      <td>换成 <code>torch.npu.Stream/Event</code>；layerwise 的关键（见 4.5）</td>
+      <td><span class="tag cpu">中</span></td>
+    </tr>
+    <tr>
+      <td>跨进程设备内存</td>
+      <td>CUDA IPC（<code>cudaIpcGetMemHandle</code>）</td>
+      <td>走 torch_npu 的内存共享（IPC）实现；跨进程 / 跨卡的能力边界要在机器上实测</td>
+      <td><span class="tag ipc">高</span></td>
+    </tr>
+    <tr>
+      <td>跨机传输</td>
+      <td>NCCL / NIXL / RDMA + GPUDirect</td>
+      <td>HCCL 用于集合通信；<strong>点对点 KV 传输</strong>需用昇腾 RDMA 网卡或 Mooncake 的 Ascend transport。<span class="tag acc">能力随版本变化，需核实</span></td>
+      <td><span class="tag net">高</span></td>
+    </tr>
+    <tr>
+      <td>序列化</td>
+      <td>pickle + 张量字节</td>
+      <td>基本不用改（纯 Python 层），但要注意反序列化后重建张量时用正确的 device</td>
+      <td><span class="tag disk">低</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2><span class="num">4.5</span>三个昇腾特有的坑</h2>
+
+<div class="grid c3">
+  <div class="card">
+    <h4>坑 1：pin memory 不是理所当然</h4>
+    <p>GPU 上 <code>torch.empty(..., pin_memory=True)</code> 是标配，背后是 <code>cudaHostAlloc</code>。NPU 侧这块能力依赖 torch_npu 版本，且语义可能略有差异（例如「pin 的内存能否被设备直接 DMA 读」）。</p>
+    <p><strong>后果</strong>：如果退化成普通内存，显存↔主机拷贝会多一次 CPU 中转，带宽可能掉一半以上。调优第一步先确认这一点。</p>
+  </div>
+  <div class="card">
+    <h4>坑 2：搬运算子的效率</h4>
+    <p>分页 KV 是「散」的：<code>block_ids = [0,1,7,9,12]</code>。GPU 上用一个小 kernel 或一串 <code>cudaMemcpyAsync</code> 就能高效处理多层。</p>
+    <p><strong>后果</strong>：NPU 侧若只能靠 Python 循环逐块拷贝，layerwise 的重叠效果会被 Python 开销吃掉，甚至比不重叠更慢。</p>
+  </div>
+  <div class="card">
+    <h4>坑 3：流与同步语义</h4>
+    <p>layerwise 要求「拷贝流」和「计算流」精确协作。NPU 的流/事件语义与 CUDA 相似但不等价，同步点放错会出现<strong>偶发的结果错误</strong>（而不是崩溃）。</p>
+    <p><strong>后果</strong>：这类问题极难定位。建议先用非 layerwise 模式验证正确性，再开 layerwise 追性能。</p>
+  </div>
+</div>
+
+<figure class="dia">
+<svg class="d" viewBox="0 0 1000 260" role="img" aria-label="NPU 上的 layerwise 与 GPU 的差别">
+  <text class="ttl" x="24" y="30">layerwise 在两端的差异（同一套逻辑，不同的底层机制）</text>
+  <rect x="24" y="46" width="470" height="192" rx="8" fill="#1b1417" stroke="#f97362"/>
+  <text class="lbl" x="40" y="70" fill="#f97362">GPU 侧</text>
+  <text class="lbl2" x="40" y="94">拷贝流：torch.cuda.Stream()</text>
+  <text class="lbl2" x="40" y="116">搬运：cudaMemcpyAsync 或自定义 kernel</text>
+  <text class="lbl2" x="40" y="138">同步：cudaEventRecord / Stream.wait_event</text>
+  <text class="lbl2" x="40" y="160">DMA 引擎：独立的 copy engine</text>
+  <text class="lbl2" x="40" y="182">总线：PCIe / NVLink-C2C</text>
+  <text class="lbl2" x="40" y="208">生态成熟，行为可预期</text>
+  <text class="lbl2" x="40" y="228">（首层延迟通常几十微秒级）</text>
+
+  <rect x="506" y="46" width="470" height="192" rx="8" fill="#171420" stroke="#a78bfa"/>
+  <text class="lbl" x="522" y="70" fill="#a78bfa">NPU 侧（LMCache-Ascend 负责）</text>
+  <text class="lbl2" x="522" y="94">拷贝流：torch.npu.Stream()</text>
+  <text class="lbl2" x="522" y="116">搬运：CANN 算子 / torch_npu 原语</text>
+  <text class="lbl2" x="522" y="138">同步：torch.npu.Event / wait_event</text>
+  <text class="lbl2" x="522" y="160">数据搬运由 NPU 内部引擎承担</text>
+  <text class="lbl2" x="522" y="182">总线：PCIe / HCCS</text>
+  <text class="lbl2" x="522" y="208">同样的设计意图，但实现与调试手段不同</text>
+  <text class="lbl2" x="522" y="228">（具体延迟必须在你的拓扑上实测）</text>
+</svg>
+<figcaption><b>图 4-3</b> 架构意图完全一致，落地面不同。写跨平台适配代码时，把「意图」和「机制」分开是很关键的思维习惯。</figcaption>
+</figure>
+
+<h2><span class="num">4.6</span>在昇腾上部署与验证（骨架）</h2>
+
+<figure class="code">
+<figcaption><span class="path">部署与验证步骤</span><span class="sub">包名与版本对应关系请以官方部署指南为准</span></figcaption>
+<pre><code><span class="c-com"># ── 1) 安装（顺序很重要：先 vllm-ascend + torch_npu，再 LMCache-Ascend）──</span>
+pip install vllm-ascend            <span class="c-com"># 会带上匹配的 torch_npu / CANN 运行时</span>
+pip install lmcache-ascend         <span class="c-com"># 注意：不是主仓库的 lmcache</span>
+
+<span class="c-com"># ── 2) 确认补丁会生效（关键，别跳）────────────────────────</span>
+python -c <span class="c-str">"import torch, torch_npu; print(torch.npu.is_available(), torch.npu.device_count())"</span>
+python -c <span class="c-str">"import lmcache, torch_npu; import lmcache_ascend; print(lmcache.__file__)"</span>
+
+<span class="c-com"># ── 3) 用与 GPU 完全相同的连接器配置启动 vLLM-Ascend ────────</span>
+vllm serve &lt;model&gt; \
+  --kv-transfer-config <span class="c-str">'{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both"}'</span>
+
+<span class="c-com"># ── 4) 验证「真的在复用」而不是「看起来在复用」──────────────</span>
+<span class="c-com">#   a. 同一个长 prompt 连续请求两次，看 TTFT 是否显著下降</span>
+<span class="c-com">#   b. 看日志里 LMCache 的命中 token 数（应为 chunk_size 的整数倍）</span>
+<span class="c-com">#   c. 确认连接器类型是 NPU 版而不是 GPU 版</span>
+
+<span class="c-com"># ── 5) 性能排查顺序（经验）──────────────────────────────</span>
+<span class="c-com">#   命中率 → pin memory 是否生效 → 非 layerwise 是否够用</span>
+<span class="c-com">#   → 再开 layerwise → 最后才考虑 L2/L3</span></code></pre>
+</figure>
+
+<div class="note">
+  <span class="t">核对外部资料的入口</span>
+  本仓（<code>LMCache/LMCache-Ascend</code>）的 README；vLLM-Ascend 文档站的「LMCache-Ascend Deployment Guide」；官方博客《LMCache × 昇腾》。
+  链接见 <a href="99-reference.html">第 9 章代码索引</a>。
+</div>
+
+<h2><span class="num">4.7</span>小结：它「起到了什么作用」</h2>
+<ol>
+  <li><strong>让 LMCache 能在昇腾上跑</strong>：把设备相关的 5~6 个边界替换为 NPU 实现，其余逻辑原样复用。</li>
+  <li><strong>让 vLLM-Ascend 获得分层 KV 缓存能力</strong>：用户侧配置与 GPU 完全一致，不需要改业务代码。</li>
+  <li><strong>隔离昇腾的复杂度</strong>：CANN/算子/IPC 的坑留在独立仓库里，不污染 LMCache 主线。</li>
+  <li><strong>它是一个适配层，不是加速器</strong>：它不会让 LMCache「更快」，它让 LMCache「可运行」，并尽量把 NPU 的搬运效率做到与 GPU 路径同级。</li>
+</ol>
+
+<div class="pager">
+  <a href="03-dataflow.html">← 上一章：数据流</a>
+  <a class="next" href="05-ipc-shm-pickle.html">下一章：IPC / SHM / Pickle →</a>
+</div>
+
+<footer>LMCache 图解讲义 · 04 LMCache-Ascend</footer>
+</main>
+</body>
+</html>
