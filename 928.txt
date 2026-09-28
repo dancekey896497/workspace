@@ -1,0 +1,626 @@
+你这两项可以拆成 **“补 SSD 功能覆盖”** 和 **“单独验证 SSD 的 O_DIRECT 分支”**。不要把它们混成一次测试，否则一旦失败，很难判断到底是 SSD backend 本身坏了，还是只有 Direct I/O 坏了。
+
+先给结论：**建议按 `SSD普通I/O → 三级联动 → SSD O_DIRECT → 压力/性能` 的顺序做。**
+
+### 先理解实际数据路径
+
+LMCache 官方把本地缓存描述为多级存储：设备显存/HBM → CPU DRAM → Local Disk/NVMe。:chatgpt-content-reference{index="0"}
+
+对于 SSD 读取，当前 `LocalDiskBackend` 并不是“SSD直接打到HBM”。它会先从 `LocalCPUBackend` 申请一块 CPU staging buffer，把磁盘数据读进 DDR，再交给上层搬回设备：
+
+```text
+写入：
+
+NPU HBM
+   │
+   ▼
+CPU / DDR buffer
+   │
+   ▼
+SSD
+   │
+   ├── 普通 I/O
+   │
+   └── O_DIRECT
+
+
+读取：
+
+SSD
+ │
+ ▼
+CPU / DDR staging buffer
+ │
+ ▼
+NPU HBM
+```
+
+源码中的 disk read 确实会通过 `local_cpu_backend.allocate(...)` 分配 staging memory。:chatgpt-content-reference{index="1"}
+
+所以你所谓“SSD 第三级没覆盖”，严格来说要证明的不是“SSD 上能看到一个文件”，而是：
+
+> **KV 能写入 SSD → CPU/HBM 中没有可用副本时能从 SSD 找到 → SSD 内容正确读取到 DDR → 再恢复到 HBM → 推理结果正确。**
+
+---
+
+## 一、问题 1：SSD 第三级没验证，具体需要干什么
+
+我建议固定成下面 5 个测试点。
+
+| 编号 | 测什么 | 目的 |
+|---|---|---|
+| SSD-01 | SSD 基础环境 | 排除磁盘、挂载、权限问题 |
+| SSD-02 | SSD-only 写入 | 证明 LocalDiskBackend 能 store |
+| SSD-03 | SSD-only 读取 | 证明 KV 真能从 SSD retrieve |
+| SSD-04 | HBM+DDR+SSD 联动 | 补完整三级路径 |
+| SSD-05 | SSD 容量/并发 | 看 eviction、异步写、稳定性 |
+
+最关键的是 **SSD-02、03 先关闭 O_DIRECT**。
+
+### SSD-01：先确认你指定的路径真的是 SSD
+
+例如假设准备使用：
+
+```bash
+export LMCACHE_SSD=/mnt/nvme/lmcache
+```
+
+执行：
+
+```bash
+mkdir -p "$LMCACHE_SSD"
+
+findmnt -T "$LMCACHE_SSD"
+
+df -hT "$LMCACHE_SSD"
+
+lsblk -o NAME,TYPE,SIZE,FSTYPE,MOUNTPOINTS,MODEL
+```
+
+记录：
+
+```text
+SSD-01 PASS/FAIL
+
+device:
+filesystem:
+mountpoint:
+free space:
+```
+
+这一步很重要，避免最后发现所谓 SSD 路径其实写在容器 overlay、系统盘或者网络盘上。
+
+---
+
+## 二、先做 SSD-only，而不是直接三级一起开
+
+原因是如果 DDR cache 同时打开，同一个 prompt 第二次请求很可能直接命中 CPU cache，**你根本证明不了 SSD read 成功了**。
+
+LMCache 当前配置支持同时启用 CPU 和 Disk，并且默认没有指定 `store_location` 时，会向所有活动 storage backend store；retrieve 默认也会搜索活动 backend。:chatgpt-content-reference{index="2"}
+
+因此不要简单理解成：
+
+```text
+DDR 满了
+↓
+才写 SSD
+```
+
+当前实现未必是这么单纯的“逐级溢出”逻辑。
+
+### SSD-02 / SSD-03：先隔离 SSD Backend
+
+先：
+
+```bash
+export LMCACHE_LOCAL_CPU=False
+export LMCACHE_MAX_LOCAL_CPU_SIZE=5
+export LMCACHE_LOCAL_DISK="file:///mnt/nvme/lmcache"
+export LMCACHE_MAX_LOCAL_DISK_SIZE=20
+export LMCACHE_EXTRA_CONFIG='{"use_odirect": false, "disk_io_threads": 4}'
+```
+
+这里：
+
+```text
+LOCAL_CPU=False
+```
+
+指的是**不把 DDR 当 hot cache 使用**。
+
+并不代表完全没有 CPU buffer。Disk Backend 自己读取时仍然会使用 CPU staging buffer。LMCache-Ascend 官方的 disk 示例也是关闭 local CPU backend、开启 local disk 的方式。:chatgpt-content-reference{index="3"}
+
+然后沿用你现在已经能工作的 vLLM + LMCache 启动命令即可。
+
+### 第一次请求：制造 KV
+
+使用一个较长、固定的 prompt。
+
+请求完成后：
+
+```bash
+find /mnt/nvme/lmcache -type f | head
+
+find /mnt/nvme/lmcache -type f | wc -l
+
+du -sh /mnt/nvme/lmcache
+```
+
+应该看到 KV chunk 文件实际产生。
+
+官方实现的 LocalDiskBackend 是“一块 KV chunk 一个磁盘文件”，disk put 是异步的。:chatgpt-content-reference{index="4"}
+
+所以第一次请求后可以稍等异步写完成，再检查目录。
+
+通过标准：
+
+```text
+SSD-02 PASS
+
+- 服务无异常
+- SSD目录出现KV文件
+- 文件数量/容量随请求增加
+- 日志没有 disk write error
+```
+
+---
+
+### SSD-03：必须证明是“从 SSD 读”
+
+这是整个 SSD 覆盖最容易被假通过的地方。
+
+第二次发送共享相同长前缀的请求。
+
+你要观察：
+
+```text
+第一次：
+HBM -> DDR staging -> SSD
+
+第二次：
+SSD -> DDR staging -> HBM
+```
+
+而不是重新 prefill。
+
+推荐同时盯日志：
+
+```bash
+grep -Ei \
+'LocalDisk|disk|cache|store|retrieve|prefetch|hit|error|exception' \
+your_vllm.log
+```
+
+理想证据是三个同时成立：
+
+```text
+1. SSD 文件确实存在
+2. 第二次请求出现 cache retrieve/hit
+3. TTFT / prefill 工作量明显下降，结果正确
+```
+
+如果只看到“第二次变快”，不够。
+
+如果只看到“SSD 有文件”，也不够。
+
+---
+
+# 三、然后才做真正 HBM + DDR + SSD 三级
+
+现在改成：
+
+```bash
+export LMCACHE_LOCAL_CPU=True
+export LMCACHE_MAX_LOCAL_CPU_SIZE=1
+export LMCACHE_LOCAL_DISK="file:///mnt/nvme/lmcache"
+export LMCACHE_MAX_LOCAL_DISK_SIZE=20
+export LMCACHE_EXTRA_CONFIG='{"use_odirect": false, "disk_io_threads": 4}'
+```
+
+这里故意把 DDR cache 设置比较小，例如 1GB。
+
+目的就是比较容易制造：
+
+```text
+HBM cache 不够
++
+DDR hot cache 不够
++
+SSD 中还有 KV
+```
+
+然后连续灌入多个长 prompt，把 working set 做到明显超过 CPU cache。
+
+例如：
+
+```text
+A
+B
+C
+D
+E
+...
+```
+
+之后重新请求最早的 A。
+
+你真正想看到的是：
+
+```text
+A 已经不在 HBM
+A 已经不在 DDR hot cache
+A 仍然在 SSD
+       ↓
+SSD hit
+       ↓
+DDR staging
+       ↓
+HBM restore
+       ↓
+正常推理
+```
+
+这才算：
+
+```text
+SSD-04 PASS
+三级链路覆盖完成
+```
+
+---
+
+# 四、第二个问题：O_DIRECT 到底要核查什么
+
+这个问题要单独处理。
+
+`O_DIRECT` 简单讲就是：
+
+```text
+普通 I/O：
+
+LMCache
+  ↓
+Linux Page Cache
+  ↓
+SSD
+
+
+O_DIRECT：
+
+LMCache buffer
+  ↓
+SSD
+```
+
+LMCache 官方配置项就是：
+
+```yaml
+extra_config:
+  use_odirect: true
+```
+
+默认值是 `false`。官方说明它用于绕过 Linux page cache，尤其适合 DDR 已大量作为 KV Cache 使用的情况。:chatgpt-content-reference{index="5"}
+
+---
+
+## 五、这里确实已经存在 Ascend 的已知风险
+
+LMCache-Ascend 在 2026 年 2 月已经有人提交过：
+
+> 开启 direct io 后，`local_disk_backend.py` 的 `write_file` 抛异常。
+
+当时环境包括 openEuler、CANN 8.3、HDK 25.3.rc1、vLLM 0.11.0，而且这个 issue 当前仍显示 Open。:chatgpt-content-reference{index="6"}
+
+所以你这条：
+
+> “O_DIRECT 路径不确定有没有问题，需要核查”
+
+应该直接升级成：
+
+> **这是一个有历史已知故障的高风险路径，需要专项回归。**
+
+---
+
+# 六、为什么 O_DIRECT 容易坏
+
+这里有一个非常值得查的点：**内存对齐**。
+
+Linux `O_DIRECT` 通常会对三件东西提出对齐要求：
+
+```text
+1. buffer 内存地址
+2. I/O 长度
+3. file offset
+```
+
+不满足时，不同文件系统可能直接返回：
+
+```text
+EINVAL
+```
+
+Linux man page 明确说明这些约束取决于 filesystem/kernel。:chatgpt-content-reference{index="7"}
+
+而当前 LMCache `LocalDiskBackend.write_file()` 大概是这样的逻辑：
+
+```python
+size = len(buffer)
+
+if size % self.os_disk_bs != 0 or not self.use_odirect:
+    # normal IO
+else:
+    fd = os.open(... | os.O_DIRECT)
+    os.write(fd, buffer)
+```
+
+也就是说它明显检查了：
+
+```text
+buffer size % filesystem block size
+```
+
+但 `O_DIRECT` 不只是要求长度对齐。
+
+**buffer 本身的起始地址也可能要求对齐。**
+
+LMCache 官方自己的 storage benchmark 特别写到：
+
+> 开启 `--local-disk-odirect` 时，会分配 page-aligned buffer，以避免 O_DIRECT 的 `EINVAL`。:chatgpt-content-reference{index="8"}
+
+所以我会把：
+
+```text
+Ascend MemoryObj / byte_array 的地址是否满足 direct IO alignment
+```
+
+列为第一怀疑点。
+
+不是直接下结论说它一定是根因，但非常值得优先验证。
+
+---
+
+# 七、O_DIRECT 不要直接上 LMCache，先测 OS 层
+
+先证明 SSD + filesystem 自己支持 direct I/O。
+
+例如：
+
+```bash
+cd /mnt/nvme/lmcache
+
+dd if=/dev/zero \
+   of=odirect_test.bin \
+   bs=4M \
+   count=64 \
+   oflag=direct \
+   status=progress
+```
+
+再读：
+
+```bash
+dd if=odirect_test.bin \
+   of=/dev/null \
+   bs=4M \
+   iflag=direct \
+   status=progress
+```
+
+最后：
+
+```bash
+rm -f odirect_test.bin
+```
+
+如果这里就：
+
+```text
+Invalid argument
+Operation not supported
+```
+
+那先别看 LMCache。
+
+这是：
+
+```text
+OD-01 FAIL
+```
+
+说明 filesystem/device/direct-I/O 环境层就有问题。
+
+如果这里 PASS：
+
+```text
+OD-01 PASS
+```
+
+才能继续 LMCache。
+
+---
+
+# 八、然后对 LMCache 做严格 A/B 测试
+
+### A：普通 SSD I/O
+
+```bash
+export LMCACHE_EXTRA_CONFIG='{"use_odirect": false, "disk_io_threads": 4}'
+```
+
+跑：
+
+```text
+store
+retrieve
+store
+retrieve
+```
+
+记录：
+
+```text
+OD-02-buffered = PASS
+```
+
+### B：唯一变量改成 O_DIRECT
+
+```bash
+export LMCACHE_EXTRA_CONFIG='{"use_odirect": true, "disk_io_threads": 4}'
+```
+
+其他东西一律不改：
+
+```text
+同一模型
+同一chunk size
+同一SSD
+同一prompt
+同一并发
+同一CPU cache配置
+```
+
+再跑同样测试。
+
+---
+
+# 九、这里有一个很容易踩的坑
+
+**日志里显示 `use_odirect=True` 不等于你真的走了 O_DIRECT。**
+
+当前 LMCache 代码是：
+
+```text
+如果 size 没有满足 filesystem block-size alignment
+        ↓
+即使 use_odirect=true
+        ↓
+仍然走普通 buffered I/O
+``` :chatgpt-content-reference{index="9"}
+
+
+所以：
+
+```text
+Using O_DIRECT for disk I/O: True
+```
+
+最多只能证明配置打开了。
+
+不能证明这一笔 KV write/read 真走了 direct IO。
+
+---
+
+## 十、必须增加“实际进入 O_DIRECT 分支”的证据
+
+最简单的办法是测试期间用 `strace`。
+
+找到对应 LMCache/vLLM worker PID 后：
+
+```bash
+sudo strace -f \
+  -e trace=openat,open,read,write \
+  -p <PID> 2>&1 | grep -E 'O_DIRECT|lmcache'
+```
+
+然后发送一次 store/retrieve 请求。
+
+如果真的走 O_DIRECT，应该能看到类似：
+
+```text
+openat(..., O_WRONLY|O_CREAT|O_DIRECT, ...)
+```
+
+以及 read 时：
+
+```text
+openat(..., O_RDONLY|O_DIRECT, ...)
+```
+
+所以 O_DIRECT 的通过标准应该是：
+
+```text
+OD-02 PASS
+
+[PASS] use_odirect=true
+[PASS] 实际 syscall 带 O_DIRECT
+[PASS] disk write 成功
+[PASS] disk read 成功
+[PASS] KV retrieve 正确
+[PASS] 无 EINVAL / exception
+```
+
+不是简单的：
+
+```text
+服务启动成功
+```
+
+---
+
+# 十一、我建议最后形成这一组固定用例
+
+这样你们报告也会非常清楚：
+
+```text
+SSD-01  SSD设备/文件系统/目录确认
+SSD-02  LocalDisk buffered write
+SSD-03  LocalDisk buffered read/retrieve
+SSD-04  HBM + DDR + SSD 三级完整路径
+SSD-05  SSD容量/eviction/并发稳定性
+
+OD-01   OS/filesystem O_DIRECT基础能力
+OD-02   LMCache O_DIRECT write
+OD-03   LMCache O_DIRECT read
+OD-04   O_DIRECT数据正确性
+OD-05   O_DIRECT并发压力
+OD-06   buffered vs O_DIRECT性能对比
+```
+
+其中最核心的判断树其实特别简单：
+
+```text
+                    SSD测试
+                       │
+             O_DIRECT = false
+                       │
+              SSD读写正常吗？
+                 /           \
+               否             是
+               │              │
+        SSD backend问题       │
+                              ▼
+                     O_DIRECT = true
+                              │
+                       SSD读写正常吗？
+                         /          \
+                       否            是
+                       │             │
+                O_DIRECT专项问题   O_DIRECT PASS
+```
+
+### 你现在最应该先做的
+
+**第一阶段不要碰性能，也不要先调线程数。**
+
+先完成：
+
+```text
+① SSD + O_DIRECT=false
+   store → SSD → retrieve
+                PASS
+
+② HBM + DDR + SSD
+   强制SSD hit
+                PASS
+
+③ O_DIRECT=true
+   store → SSD → retrieve
+   并证明 syscall 真带 O_DIRECT
+                PASS/FAIL
+```
+
+如果第①项 PASS、第③项 FAIL，问题就已经被非常干净地缩小到了 **LMCache `O_DIRECT` implementation / buffer alignment / filesystem direct-I/O compatibility**，而不是整个 SSD 后端。
+
+而且结合目前源码和 Ascend 已有 issue，我会优先检查 **`memory_obj.byte_array` 地址对齐 + KV chunk byte size + filesystem block size** 这三项。:chatgpt-content-reference{index="10"}
+
+如果你接下来要真正上服务器验证，我可以继续按你之前那种格式，直接给你整理成 **`SSD-01 ~ OD-06` 每项一组可以直接 SSH Bash 粘贴的命令 + PASS/FAIL 判定标准**。
