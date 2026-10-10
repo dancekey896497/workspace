@@ -1,0 +1,1 @@
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -Command "$s=[IO.File]::ReadAllText($env:CLIPBOARD_SYNC_SELF,[Text.Encoding]::UTF8); & ([ScriptBlock]::Create(($s -split '(?m)^# CLIPBOARD_POWERSHELL\r?$',2)[1]))"
