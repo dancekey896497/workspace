@@ -1,0 +1,160 @@
+
+tests/v1/distributed/test_fs_l2_adapter_staging.py::test_store_uses_aligned_ordinary_memory FAILED [ 25%]
+tests/v1/distributed/test_fs_l2_adapter_staging.py::test_short_write_is_not_published FAILED [ 50%]
+tests/v1/distributed/test_fs_l2_adapter_staging.py::test_reused_temp_file_is_truncated FAILED [ 75%]
+tests/v1/distributed/test_fs_l2_adapter_staging.py::test_short_read_leaves_destination_unchanged_and_continues FAILED [100%]
+
+=================================== FAILURES ===================================
+___________________ test_store_uses_aligned_ordinary_memory ____________________
+
+adapter = <lmcache.v1.distributed.l2_adapters.fs_l2_adapter.FSL2Adapter object at 0x72a0924ce240>
+tmp_path = PosixPath('/tmp/pytest-of-luv_l/pytest-0/test_store_uses_aligned_ordina0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x72a0924cca70>
+
+    def test_store_uses_aligned_ordinary_memory(
+        adapter: FSL2Adapter, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        payload = bytes(range(251)) * mmap.PAGESIZE
+        source = Buffer(payload)
+        source_address = ctypes.addressof(source.array)
+        alignment = math.lcm(mmap.PAGESIZE, os.statvfs(tmp_path).f_bsize)
+        real_write = os.write
+        writes: list[tuple[int, bytes]] = []
+    
+        def inspect_write(fd: int, buf: bytes | memoryview) -> int:
+            address = ctypes.addressof(ctypes.c_char.from_buffer(buf))
+            writes.append((address, bytes(buf)))
+            if address == source_address or address % alignment:
+                raise OSError(errno.EFAULT, "buffer is borrowed or unaligned")
+            return real_write(fd, buf)
+    
+        monkeypatch.setattr(os, "write", inspect_write)
+        result = store(adapter, [key()], [source])
+>       assert result.is_successful()
+E       assert False
+E        +  where False = is_successful()
+E        +    where is_successful = -1.is_successful
+
+tests/v1/distributed/test_fs_l2_adapter_staging.py:139: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+[32;20m[2026-10-13 00:53:32,600] LMCache INFO:[0m Initialized FSL2Adapter with base_path=/tmp/pytest-of-luv_l/pytest-0/test_store_uses_aligned_ordina0, relative_tmp_dir=None, read_ahead_size=None, use_odirect=True [3m(fs_l2_adapter.py:304:lmcache.v1.distributed.l2_adapters.fs_l2_adapter)[0m
+----------------------------- Captured stderr call -----------------------------
+[31;20m[2026-10-13 00:53:32,605] LMCache ERROR:[0m Failed to O_DIRECT write /tmp/pytest-of-luv_l/pytest-0/test_store_uses_aligned_ordina0/test@0x00000000@0@00000000.tmp [3m(fs_l2_adapter.py:589:lmcache.v1.distributed.l2_adapters.fs_l2_adapter)[0m
+Traceback (most recent call last):
+  File "/mnt/e/work/SSD/LMCache-pr/lmcache/v1/distributed/l2_adapters/fs_l2_adapter.py", line 587, in _write_with_odirect
+    os.write(fd, buf)
+  File "/mnt/e/work/SSD/LMCache-pr/tests/v1/distributed/test_fs_l2_adapter_staging.py", line 134, in inspect_write
+    raise OSError(errno.EFAULT, "buffer is borrowed or unaligned")
+OSError: [Errno 14] buffer is borrowed or unaligned
+[31;20m[2026-10-13 00:53:32,617] LMCache ERROR:[0m FSL2Adapter failed to store /tmp/pytest-of-luv_l/pytest-0/test_store_uses_aligned_ordina0/test@0x00000000@0@00000000.data [3m(fs_l2_adapter.py:657:lmcache.v1.distributed.l2_adapters.fs_l2_adapter)[0m
+Traceback (most recent call last):
+  File "/mnt/e/work/SSD/LMCache-pr/lmcache/v1/distributed/l2_adapters/fs_l2_adapter.py", line 637, in _execute_store
+    await self._loop.run_in_executor(
+  File "/usr/lib/python3.12/concurrent/futures/thread.py", line 58, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/e/work/SSD/LMCache-pr/lmcache/v1/distributed/l2_adapters/fs_l2_adapter.py", line 587, in _write_with_odirect
+    os.write(fd, buf)
+  File "/mnt/e/work/SSD/LMCache-pr/tests/v1/distributed/test_fs_l2_adapter_staging.py", line 134, in inspect_write
+    raise OSError(errno.EFAULT, "buffer is borrowed or unaligned")
+OSError: [Errno 14] buffer is borrowed or unaligned
+--------------------------- Captured stderr teardown ---------------------------
+[32;20m[2026-10-13 00:53:34,322] LMCache INFO:[0m FSL2Adapter closed [3m(fs_l2_adapter.py:487:lmcache.v1.distributed.l2_adapters.fs_l2_adapter)[0m
+______________________ test_short_write_is_not_published _______________________
+
+adapter = <lmcache.v1.distributed.l2_adapters.fs_l2_adapter.FSL2Adapter object at 0x72a09119e000>
+tmp_path = PosixPath('/tmp/pytest-of-luv_l/pytest-0/test_short_write_is_not_publis0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x72a09119deb0>
+
+    def test_short_write_is_not_published(
+        adapter: FSL2Adapter, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        real_write = os.write
+    
+        def short_write(fd: int, buf: bytes | memoryview) -> int:
+            return real_write(fd, buf[:-1])
+    
+        monkeypatch.setattr(os, "write", short_write)
+        result = store(adapter, [key()], [Buffer(b"x" * mmap.PAGESIZE)])
+>       assert not result.is_successful()
+E       assert not True
+E        +  where True = is_successful()
+E        +    where is_successful = 4096.is_successful
+
+tests/v1/distributed/test_fs_l2_adapter_staging.py:164: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+[32;20m[2026-10-13 00:53:34,326] LMCache INFO:[0m Initialized FSL2Adapter with base_path=/tmp/pytest-of-luv_l/pytest-0/test_short_write_is_not_publis0, relative_tmp_dir=None, read_ahead_size=None, use_odirect=True [3m(fs_l2_adapter.py:304:lmcache.v1.distributed.l2_adapters.fs_l2_adapter)[0m
+--------------------------- Captured stderr teardown ---------------------------
+[32;20m[2026-10-13 00:53:34,375] LMCache INFO:[0m FSL2Adapter closed [3m(fs_l2_adapter.py:487:lmcache.v1.distributed.l2_adapters.fs_l2_adapter)[0m
+______________________ test_reused_temp_file_is_truncated ______________________
+
+adapter = <lmcache.v1.distributed.l2_adapters.fs_l2_adapter.FSL2Adapter object at 0x72a0911c11c0>
+tmp_path = PosixPath('/tmp/pytest-of-luv_l/pytest-0/test_reused_temp_file_is_trunc0')
+
+    def test_reused_temp_file_is_truncated(adapter: FSL2Adapter, tmp_path: Path) -> None:
+        payload = b"x" * mmap.PAGESIZE
+        assert store(adapter, [key()], [Buffer(payload)]).is_successful()
+        final = next(tmp_path.glob("*.data"))
+        adapter.delete([key()])
+        final.with_suffix(".tmp").write_bytes(b"stale" * len(payload))
+        assert store(adapter, [key()], [Buffer(payload)]).is_successful()
+>       assert final.read_bytes() == payload
+E       AssertionError: assert b'xxxxxxxxxxx...alestalestale' == b'xxxxxxxxxxx...xxxxxxxxxxxxx'
+E         
+E         Full diff:
+E           (b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+E            b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+E            b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+E            b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+E            b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'...
+E         
+E         ...Full output truncated (268 lines hidden), use '-vv' to show
+
+tests/v1/distributed/test_fs_l2_adapter_staging.py:177: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+[32;20m[2026-10-13 00:53:34,379] LMCache INFO:[0m Initialized FSL2Adapter with base_path=/tmp/pytest-of-luv_l/pytest-0/test_reused_temp_file_is_trunc0, relative_tmp_dir=None, read_ahead_size=None, use_odirect=True [3m(fs_l2_adapter.py:304:lmcache.v1.distributed.l2_adapters.fs_l2_adapter)[0m
+--------------------------- Captured stderr teardown ---------------------------
+[32;20m[2026-10-13 00:53:34,444] LMCache INFO:[0m FSL2Adapter closed [3m(fs_l2_adapter.py:487:lmcache.v1.distributed.l2_adapters.fs_l2_adapter)[0m
+__________ test_short_read_leaves_destination_unchanged_and_continues __________
+
+adapter = <lmcache.v1.distributed.l2_adapters.fs_l2_adapter.FSL2Adapter object at 0x72a0911c1dc0>
+tmp_path = PosixPath('/tmp/pytest-of-luv_l/pytest-0/test_short_read_leaves_destina0')
+
+    def test_short_read_leaves_destination_unchanged_and_continues(
+        adapter: FSL2Adapter, tmp_path: Path
+    ) -> None:
+        size = mmap.PAGESIZE * 2
+        keys = [key(0), key(1)]
+        assert store(
+            adapter, keys, [Buffer(b"a" * size), Buffer(b"b" * size)]
+        ).is_successful()
+        next(tmp_path.glob(f"*{keys[0].chunk_hash.hex()}.data")).write_bytes(
+            b"a" * mmap.PAGESIZE
+        )
+        targets = [Buffer(b"?" * size), Buffer(b"?" * size)]
+        assert load(adapter, keys, targets) == [1]
+>       assert bytes(targets[0].byte_array) == b"?" * size
+E       AssertionError: assert b'aaaaaaaaaaa...?????????????' == b'???????????...?????????????'
+E         
+E         At index 0 diff: b'a' != b'?'
+E         
+E         Full diff:
+E         - (b'????????????????????????????????????????????????????????????????????????????'
+E         -  b'????????????????????????????????????????????????????????????????????????????'
+E         -  b'????????????????????????????????????????????????????????????????????????????'...
+E         
+E         ...Full output truncated (159 lines hidden), use '-vv' to show
+
+tests/v1/distributed/test_fs_l2_adapter_staging.py:193: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+[32;20m[2026-10-13 00:53:34,448] LMCache INFO:[0m Initialized FSL2Adapter with base_path=/tmp/pytest-of-luv_l/pytest-0/test_short_read_leaves_destina0, relative_tmp_dir=None, read_ahead_size=None, use_odirect=True [3m(fs_l2_adapter.py:304:lmcache.v1.distributed.l2_adapters.fs_l2_adapter)[0m
+----------------------------- Captured stderr call -----------------------------
+[33;20m[2026-10-13 00:53:34,459] LMCache WARNING:[0m Incomplete O_DIRECT read for test@0x00000000@0@00000000.data: expected 8192, got 4096 [3m(fs_l2_adapter.py:720:lmcache.v1.distributed.l2_adapters.fs_l2_adapter)[0m
+--------------------------- Captured stderr teardown ---------------------------
+[32;20m[2026-10-13 00:53:34,529] LMCache INFO:[0m FSL2Adapter closed [3m(fs_l2_adapter.py:487:lmcache.v1.distributed.l2_adapters.fs_l2_adapter)[0m
+=========================== short test summary info ============================
+FAILED tests/v1/distributed/test_fs_l2_adapter_staging.py::test_store_uses_aligned_ordinary_memory
+FAILED tests/v1/distributed/test_fs_l2_adapter_staging.py::test_short_write_is_not_published
+FAILED tests/v1/distributed/test_fs_l2_adapter_staging.py::test_reused_temp_file_is_truncated
+FAILED tests/v1/distributed/test_fs_l2_adapter_staging.py::test_short_read_leaves_destination_unchanged_and_continues
+============================== 4 failed in 4.22s ===============================
