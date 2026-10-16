@@ -1,0 +1,43 @@
+export CONTAINER_NAME="DeepSeekV4-flash-0731-lmcache-mp-server"
+docker run -itd \
+  -u root \
+  --privileged \
+  --ipc=host \
+  --net host \
+  --name ${CONTAINER_NAME} \
+  --shm-size=1024g \
+  --cap-add=SYS_NICE \
+  --cap-add=SYS_PTRACE \
+  --ulimit memlock=-1:-1 \
+  --device /dev/davinci0 \
+  --device /dev/davinci1 \
+  --device /dev/davinci2 \
+  --device /dev/davinci3 \
+  --device /dev/davinci4 \
+  --device /dev/davinci5 \
+  --device /dev/davinci6 \
+  --device /dev/davinci7 \
+  --device /dev/davinci_manager \
+  --device /dev/devmm_svm \
+  --device /dev/hisi_hdc \
+  -v /home:/home \
+  -v /modeldata/lmcache_ssdcache:/ssd/lmcache \
+  -v /AIdata:/AIdata \
+  -v /usr/local/dcmi:/usr/local/dcmi \
+  -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi \
+  -v /usr/local/Ascend/driver/lib64/:/usr/local/Ascend/driver/lib64/ \
+  -v /usr/local/Ascend/driver/version.info:/usr/local/Ascend/driver/version.info \
+  -v /etc/ascend_install.info:/etc/ascend_install.info \
+  -v /etc/hccn.conf:/etc/hccn.conf \
+  -v /root/.cache:/root/.cache \
+  quay.io/ascend/vllm-ascend:nightly-releases-v0.25.1rc-anomaly_middleware-bugfix_0.2-lmcache-mp \
+  lmcache server \
+    --host 127.0.0.1 \
+    --port 5555 \
+    --chunk-size 4096 \
+    --supported-transfer-mode lmcache_driven \
+    --l1-size-gb 512 \
+    --eviction-policy LRU \
+    --worker-reap-timeout-seconds 0 \
+    --http-host 0.0.0.0 \
+    --l2-adapter '{"type":"fs_native","base_path":"/ssd/lmcache","num_workers":4,"use_odirect":true,"eviction":{"eviction_policy":"IsolatedLRU","trigger_watermark":0.8,"eviction_ratio":0.1}}'

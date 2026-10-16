@@ -1,0 +1,166 @@
+{
+  "scope": "WINDOWS_AND_EXISTING_WSL_ONLY_NO_NPU",
+  "hardware_experiments": "NOT_EXECUTED",
+  "checks": [
+    {
+      "check": "python_syntax_utf8_help",
+      "file": "collect_runtime.py",
+      "exit": 0
+    },
+    {
+      "check": "python_syntax_utf8_help",
+      "file": "inspect_store_log.py",
+      "exit": 0
+    },
+    {
+      "check": "python_syntax_utf8_help",
+      "file": "mp_probe_client.py",
+      "exit": 0
+    },
+    {
+      "check": "python_syntax_utf8_help",
+      "file": "probe_npu_dio_chain.py",
+      "exit": 0
+    },
+    {
+      "check": "static_describe_NOT_measurement",
+      "file": "mp_probe_client.py",
+      "data": {
+        "scope": "synthetic_fmt17_real_mp_NOT_customer_DeepSeek_layout",
+        "source_refs": {
+          "LMCache": "240506edf5146613b015e9e2e51189f1fc099b76",
+          "LMCache-Ascend": "b813e970075983e94e86cc2911a40b1c00e7c780"
+        },
+        "protocol": "REGISTER_KV_CACHE -> STORE -> UNREGISTER_KV_CACHE -> END_SESSION",
+        "transfer_mode": "lmcache_driven",
+        "chunk_size": 4096,
+        "layers": 2,
+        "block_size": 16,
+        "num_blocks": 256,
+        "plane_specs": [
+          [
+            512,
+            "bfloat16"
+          ],
+          [
+            64,
+            "bfloat16"
+          ],
+          [
+            128,
+            "int8"
+          ],
+          [
+            1,
+            "float16"
+          ]
+        ],
+        "logical_object_bytes": 10502144,
+        "real_server_required": true,
+        "l2_proof": "Not supplied by client STORE ACK; use server completion/error and new files.",
+        "l1_readback": "Optional --verify-l1; a hit may come from L1 and does not prove L2.",
+        "cleanup_failure": "Retain IPC owners until the operator stops THIS test server and creates the stop marker.",
+        "npu_runtime_validation": "NOT_VERIFIED on this development machine"
+      }
+    },
+    {
+      "check": "static_describe_NOT_measurement",
+      "file": "probe_npu_dio_chain.py",
+      "data": {
+        "case": "dsa_c8_4_small_format17",
+        "layers": 2,
+        "blocks": 4,
+        "block_size": 16,
+        "actual_slots": 64,
+        "planes": [
+          {
+            "width": 512,
+            "dtype": "bfloat16",
+            "itemsize": 2
+          },
+          {
+            "width": 64,
+            "dtype": "bfloat16",
+            "itemsize": 2
+          },
+          {
+            "width": 128,
+            "dtype": "int8",
+            "itemsize": 1
+          },
+          {
+            "width": 1,
+            "dtype": "float16",
+            "itemsize": 2
+          }
+        ],
+        "slot_bytes": 1282,
+        "logical_bytes": 164096,
+        "align_bytes": 4096,
+        "physical_bytes": 167936,
+        "padding_bytes": 3840,
+        "steps": [
+          "real Lazy allocation",
+          "CPU-filled same-object FS write/read",
+          "native format-17 D2H into same object on a dedicated stream",
+          "wait for that stream",
+          "verify logical content and padding",
+          "same-object FS write/read with a new key"
+        ],
+        "default_view": "actual installed adapter helper; length fallback is not DIO PASS",
+        "reference_option": "--padded-view-reference uses a test-local original-address P-byte view",
+        "scope": "component only; no model, IPC, MP server, quota or core analysis",
+        "references": [
+          "https://github.com/LMCache/LMCache-Ascend/blob/b813e970075983e94e86cc2911a40b1c00e7c780/tests/v1/test_mp_block_transfer.py#L303",
+          "https://github.com/LMCache/LMCache-Ascend/blob/b813e970075983e94e86cc2911a40b1c00e7c780/tests/v1/test_mp_block_transfer.py#L108",
+          "https://github.com/LMCache/LMCache/blob/240506edf5146613b015e9e2e51189f1fc099b76/lmcache/v1/gpu_connector/utils.py#L672"
+        ]
+      }
+    },
+    {
+      "check": "original_pool_dry_run_NO_SERVER_STARTED",
+      "exit": 0
+    },
+    {
+      "check": "earlier_bash_syntax",
+      "files": [
+        "run_server.sh",
+        "客户原始启动命令.sh"
+      ],
+      "exit": 0
+    },
+    {
+      "check": "earlier_baseline_and_no_eviction_dry_run",
+      "exit": 0,
+      "assertions": "DIO=true, fs_native, workers4, chunk4096; only baseline has IsolatedLRU"
+    },
+    {
+      "check": "field_log_excerpt_parser",
+      "classification": "store_completed",
+      "note": "Copied text, not a new hardware result"
+    },
+    {
+      "check": "SIMULATED_sync_error_then_recovery",
+      "owners_retained_at_error_checkpoint": true,
+      "error_preserved": true,
+      "not_a_hardware_result": true
+    },
+    {
+      "check": "markdown_utf8_and_local_links",
+      "link_count": 4,
+      "broken": 0
+    }
+  ],
+  "review": {
+    "independent_review_fixes": [
+      "local server identity and matching ports",
+      "unsettled MP transfers retain owners",
+      "NPU synchronization error prevents early free"
+    ],
+    "agent_checks": [
+      "log result counters and unknown/mixed classification",
+      "read-only collector bounded scan",
+      "client identity accepted/rejected cases and future errors"
+    ]
+  }
+}
