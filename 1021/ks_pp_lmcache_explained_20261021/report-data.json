@@ -1,0 +1,2505 @@
+{
+  "schema": "ks-pp-lmcache-beginner-evidence-v1",
+  "title": "为什么PP2接入LMCache的收益比另一组PP1小",
+  "date": "2026-10-21",
+  "execution": "只读取本地既有证据，没有新增推理、NPU、服务或运行源码动作",
+  "main_statement": "各自历史ON/OFF证明收益比例不同；今天ON冷/热与源码说明冷态Attention的工作划分和效率不同，缓存能省掉的时间基数不同。同时保留恢复控制动作、末token软件推进及完成通知耦合。并非证明PP个数单独造成全部差异。",
+  "sources": {
+    "paired": {
+      "path": "E:\\work\\ks\\output\\ks_test_results_structured_20261021\\data\\paired-performance-analysis.json",
+      "json_pointer": null
+    },
+    "case_report": {
+      "path": "E:\\work\\ks\\output\\ks_test_results_structured_20261021\\测试结果报告.md",
+      "json_pointer": null,
+      "lines_1based": [
+        9,
+        21
+      ]
+    },
+    "report_data": {
+      "path": "E:\\work\\ks\\output\\ks_test_results_structured_20261021\\data\\report-data.json",
+      "json_pointer": null
+    },
+    "historical_action_table": {
+      "path": "E:\\work\\ks\\output\\ks_test_results_structured_20261021\\测试结果报告.md",
+      "json_pointer": null,
+      "lines_1based": [
+        851,
+        858
+      ]
+    },
+    "sfa_work": {
+      "path": "E:\\work\\ks\\output\\ks_rootcause_window_20261021\\analysis\\continuation_1730\\sfa\\sfa_work_model.json",
+      "json_pointer": null
+    },
+    "sfa_identity": {
+      "path": "E:\\work\\ks\\output\\ks_rootcause_window_20261021\\analysis\\continuation_1730\\sfa\\runtime_kernel_identity_audit.json",
+      "json_pointer": null
+    },
+    "sfa_summary": {
+      "path": "E:\\work\\ks\\output\\ks_rootcause_window_20261021\\analysis\\sfa-and-cpu-summary.json",
+      "json_pointer": null
+    },
+    "restore_pp1": {
+      "path": "E:\\work\\ks\\output\\ks_rootcause_window_20261021\\analysis\\continuation_1730\\cache\\pp1-restore-comparison.json",
+      "json_pointer": null
+    },
+    "restore_pp2": {
+      "path": "E:\\work\\ks\\output\\ks_rootcause_window_20261021\\analysis\\continuation_1730\\cache\\pp2-restore-comparison.json",
+      "json_pointer": null
+    },
+    "restore_parts": {
+      "path": "E:\\work\\ks\\output\\ks_rootcause_window_20261021\\analysis\\continuation_1730\\cache\\restore-partition-totals.json",
+      "json_pointer": null
+    },
+    "diagnostic_scope": {
+      "path": "E:\\work\\ks\\output\\ks_rootcause_window_20261021\\阶段报告.md",
+      "json_pointer": null,
+      "lines_1based": [
+        26,
+        33
+      ]
+    },
+    "off_on_boundary": {
+      "path": "E:\\work\\ks\\output\\ks_rootcause_window_20261021\\analysis\\continuation_1730\\sfa\\OFF_ON证据边界核对.md",
+      "json_pointer": null
+    },
+    "restore_explanation": {
+      "path": "E:\\work\\ks\\output\\ks_rootcause_window_20261021\\analysis\\continuation_1730\\cache\\KV恢复_PP1_PP2_机制比较.md",
+      "json_pointer": null
+    },
+    "notification_chain": {
+      "path": "E:\\work\\ks\\output\\ks_rootcause_window_20261021\\续查报告_截至1815.md",
+      "json_pointer": null,
+      "section": "2. 已恢复KV为什么还会等另一个请求"
+    }
+  },
+  "historical_c4_matrix": {
+    "label": "原三档中4K四并发：四列为各自真实ON/OFF",
+    "columns": [
+      {
+        "id": "pp2_off",
+        "label": "PP2 关闭LMCache",
+        "layout": "PP2",
+        "lmcache": false,
+        "date": "2026-10-19",
+        "p_node": "12",
+        "d_node": "137",
+        "p": {
+          "DP": 1,
+          "TP": 8,
+          "PP": 2,
+          "DSA_CP": true,
+          "MTP_tokens": 3,
+          "pp_layers": [
+            41,
+            37
+          ]
+        },
+        "d": {
+          "DP": 4,
+          "TP": 4,
+          "PP": 1,
+          "MTP_tokens": 3,
+          "lmcache": false,
+          "interfaces": 4
+        },
+        "connector_p": "MooncakeConnectorV1",
+        "p_to_d": "原Mooncake，use_ascend_direct=true",
+        "observation": "完成事件诊断；taskset流程已完成，不等于NUMA/IRQ已验证",
+        "official_case_id": "19-off-diag",
+        "source": {
+          "source_id": "paired",
+          "json_pointer": "/groups/0/tiers/1"
+        },
+        "raw_metric_sources": [
+          {
+            "role": "ON",
+            "raw_json": "E:\\work\\ks\\output\\ks_ttft_observe_20261019\\causal_followup\\evidence\\capture-20261019-135642\\m137\\on-diag-12g\\results\\pp2_in4096_out256_c4_n32.json",
+            "client_jsonl": "E:\\work\\ks\\output\\ks_ttft_observe_20261019\\causal_followup\\evidence\\capture-20261019-135642\\m137\\on-diag-12g\\client-tier2.jsonl",
+            "keys": [
+              "ttfts[i]"
+            ]
+          },
+          {
+            "role": "OFF",
+            "raw_json": "E:\\work\\ks\\output\\ks_ttft_observe_20261019\\causal_followup\\evidence\\capture-20261019-141705\\m137\\off-diag\\results\\pp2_in4096_out256_c4_n32.json",
+            "client_jsonl": "E:\\work\\ks\\output\\ks_ttft_observe_20261019\\causal_followup\\evidence\\capture-20261019-141705\\m137\\off-diag\\client-tier2.jsonl",
+            "keys": [
+              "ttfts[i]"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "pp2_on",
+        "label": "PP2 开启LMCache",
+        "layout": "PP2",
+        "lmcache": true,
+        "date": "2026-10-19",
+        "p_node": "12",
+        "d_node": "137",
+        "p": {
+          "DP": 1,
+          "TP": 8,
+          "PP": 2,
+          "DSA_CP": true,
+          "MTP_tokens": 3,
+          "pp_layers": [
+            41,
+            37
+          ]
+        },
+        "d": {
+          "DP": 4,
+          "TP": 4,
+          "PP": 1,
+          "MTP_tokens": 3,
+          "lmcache": false,
+          "interfaces": 4
+        },
+        "connector_p": "MultiConnector[MooncakeConnectorV1, LMCacheMPConnector]",
+        "p_to_d": "原Mooncake，use_ascend_direct=true",
+        "observation": "完成事件诊断；taskset流程已完成，不等于NUMA/IRQ已验证",
+        "official_case_id": "19-on-diag-12g",
+        "source": {
+          "source_id": "paired",
+          "json_pointer": "/groups/0/tiers/1"
+        },
+        "raw_metric_sources": [
+          {
+            "role": "ON",
+            "raw_json": "E:\\work\\ks\\output\\ks_ttft_observe_20261019\\causal_followup\\evidence\\capture-20261019-135642\\m137\\on-diag-12g\\results\\pp2_in4096_out256_c4_n32.json",
+            "client_jsonl": "E:\\work\\ks\\output\\ks_ttft_observe_20261019\\causal_followup\\evidence\\capture-20261019-135642\\m137\\on-diag-12g\\client-tier2.jsonl",
+            "keys": [
+              "ttfts[i]"
+            ]
+          },
+          {
+            "role": "OFF",
+            "raw_json": "E:\\work\\ks\\output\\ks_ttft_observe_20261019\\causal_followup\\evidence\\capture-20261019-141705\\m137\\off-diag\\results\\pp2_in4096_out256_c4_n32.json",
+            "client_jsonl": "E:\\work\\ks\\output\\ks_ttft_observe_20261019\\causal_followup\\evidence\\capture-20261019-141705\\m137\\off-diag\\client-tier2.jsonl",
+            "keys": [
+              "ttfts[i]"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "pp1_off",
+        "label": "PP1 关闭LMCache",
+        "layout": "PP1",
+        "lmcache": false,
+        "date": "2026-10-20",
+        "p_node": "8",
+        "d_node": "137",
+        "p": {
+          "DP": 1,
+          "TP": 16,
+          "PP": 1,
+          "DSA_CP": false,
+          "MTP_tokens": 3,
+          "pp_layers": null
+        },
+        "d": {
+          "DP": 4,
+          "TP": 4,
+          "PP": 1,
+          "MTP_tokens": 3,
+          "lmcache": false,
+          "interfaces": 4
+        },
+        "connector_p": "MooncakeConnectorV1",
+        "p_to_d": "原Mooncake，use_ascend_direct=true",
+        "observation": "完成链及READ细观测；自动CPU绑定失败，观测贡献未单独量化",
+        "official_case_id": "20-pp1-off",
+        "source": {
+          "source_id": "paired",
+          "json_pointer": "/groups/1/tiers/1"
+        },
+        "raw_metric_sources": [
+          {
+            "role": "ON",
+            "raw_json": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\pp1-control\\原始资料\\m137-pp1-complete-144531\\pp1-control\\bench\\on\\20261020-141112\\results\\pp1_in4096_out256_c4_n32.json",
+            "client_jsonl": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\pp1-control\\原始资料\\m137-pp1-complete-144531\\pp1-control\\bench\\on\\20261020-141112\\client-tier2.jsonl",
+            "keys": [
+              "ttfts[i]"
+            ]
+          },
+          {
+            "role": "OFF",
+            "raw_json": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\pp1-control\\原始资料\\m137-pp1-complete-144531\\pp1-control\\bench\\off\\20261020-142702\\results\\pp1_in4096_out256_c4_n32.json",
+            "client_jsonl": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\pp1-control\\原始资料\\m137-pp1-complete-144531\\pp1-control\\bench\\off\\20261020-142702\\client-tier2.jsonl",
+            "keys": [
+              "ttfts[i]"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "pp1_on",
+        "label": "PP1 开启LMCache",
+        "layout": "PP1",
+        "lmcache": true,
+        "date": "2026-10-20",
+        "p_node": "8",
+        "d_node": "137",
+        "p": {
+          "DP": 1,
+          "TP": 16,
+          "PP": 1,
+          "DSA_CP": false,
+          "MTP_tokens": 3,
+          "pp_layers": null
+        },
+        "d": {
+          "DP": 4,
+          "TP": 4,
+          "PP": 1,
+          "MTP_tokens": 3,
+          "lmcache": false,
+          "interfaces": 4
+        },
+        "connector_p": "MultiConnector[MooncakeConnectorV1, LMCacheMPConnector]",
+        "p_to_d": "原Mooncake，use_ascend_direct=true",
+        "observation": "完成链及READ细观测；自动CPU绑定失败，观测贡献未单独量化",
+        "official_case_id": "20-pp1-on",
+        "source": {
+          "source_id": "paired",
+          "json_pointer": "/groups/1/tiers/1"
+        },
+        "raw_metric_sources": [
+          {
+            "role": "ON",
+            "raw_json": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\pp1-control\\原始资料\\m137-pp1-complete-144531\\pp1-control\\bench\\on\\20261020-141112\\results\\pp1_in4096_out256_c4_n32.json",
+            "client_jsonl": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\pp1-control\\原始资料\\m137-pp1-complete-144531\\pp1-control\\bench\\on\\20261020-141112\\client-tier2.jsonl",
+            "keys": [
+              "ttfts[i]"
+            ]
+          },
+          {
+            "role": "OFF",
+            "raw_json": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\pp1-control\\原始资料\\m137-pp1-complete-144531\\pp1-control\\bench\\off\\20261020-142702\\results\\pp1_in4096_out256_c4_n32.json",
+            "client_jsonl": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\pp1-control\\原始资料\\m137-pp1-complete-144531\\pp1-control\\bench\\off\\20261020-142702\\client-tier2.jsonl",
+            "keys": [
+              "ttfts[i]"
+            ]
+          }
+        ]
+      }
+    ],
+    "metrics": [
+      {
+        "key": "ttft_s",
+        "label": "平均TTFT：请求发出到首token",
+        "unit": "秒",
+        "values": [
+          1.1918283700253125,
+          1.1110150462568358,
+          2.096524698814998,
+          1.1937372303671308
+        ],
+        "status": "已观察：各自共同成功集合",
+        "sources": [
+          {
+            "source_id": "paired",
+            "json_pointer": "/groups/0/tiers/1/metrics/0"
+          },
+          {
+            "source_id": "paired",
+            "json_pointer": "/groups/0/tiers/1/metrics/0"
+          },
+          {
+            "source_id": "paired",
+            "json_pointer": "/groups/1/tiers/1/metrics/0"
+          },
+          {
+            "source_id": "paired",
+            "json_pointer": "/groups/1/tiers/1/metrics/0"
+          }
+        ]
+      },
+      {
+        "key": "tpot_ms",
+        "label": "平均TPOT：首token后每个输出token间隔",
+        "unit": "毫秒",
+        "values": [
+          24.731021960108347,
+          25.199831875762108,
+          24.327412686400663,
+          24.986738418942466
+        ],
+        "status": "已观察：各自共同成功集合",
+        "sources": [
+          {
+            "source_id": "paired",
+            "json_pointer": "/groups/0/tiers/1/metrics/1"
+          },
+          {
+            "source_id": "paired",
+            "json_pointer": "/groups/0/tiers/1/metrics/1"
+          },
+          {
+            "source_id": "paired",
+            "json_pointer": "/groups/1/tiers/1/metrics/1"
+          },
+          {
+            "source_id": "paired",
+            "json_pointer": "/groups/1/tiers/1/metrics/1"
+          }
+        ]
+      },
+      {
+        "key": "e2el_s",
+        "label": "平均端到端：请求发出到完成",
+        "unit": "秒",
+        "values": [
+          7.498238969852941,
+          7.5369721745761735,
+          8.300014933847168,
+          7.565355527197459
+        ],
+        "status": "已观察：各自共同成功集合",
+        "sources": [
+          {
+            "source_id": "paired",
+            "json_pointer": "/groups/0/tiers/1/metrics/2"
+          },
+          {
+            "source_id": "paired",
+            "json_pointer": "/groups/0/tiers/1/metrics/2"
+          },
+          {
+            "source_id": "paired",
+            "json_pointer": "/groups/1/tiers/1/metrics/2"
+          },
+          {
+            "source_id": "paired",
+            "json_pointer": "/groups/1/tiers/1/metrics/2"
+          }
+        ]
+      },
+      {
+        "key": "decode_s",
+        "label": "首token后客户端耗时（不是D纯执行）",
+        "unit": "秒",
+        "values": [
+          6.306410599827628,
+          6.425957128319338,
+          6.203490235032169,
+          6.371618296830328
+        ],
+        "status": "已观察：各自共同成功集合",
+        "sources": [
+          {
+            "source_id": "paired",
+            "json_pointer": "/groups/0/tiers/1/metrics/3"
+          },
+          {
+            "source_id": "paired",
+            "json_pointer": "/groups/0/tiers/1/metrics/3"
+          },
+          {
+            "source_id": "paired",
+            "json_pointer": "/groups/1/tiers/1/metrics/3"
+          },
+          {
+            "source_id": "paired",
+            "json_pointer": "/groups/1/tiers/1/metrics/3"
+          }
+        ]
+      },
+      {
+        "key": "input_tokens",
+        "label": "输入长度",
+        "unit": "token",
+        "values": [
+          4096,
+          4096,
+          4096,
+          4096
+        ],
+        "status": "原三档C4；已审计输入长度",
+        "source": {
+          "source_id": "paired",
+          "json_pointer": "/verification/source_checks"
+        },
+        "raw_json_key": "input_lens"
+      },
+      {
+        "key": "output_tokens",
+        "label": "输出长度",
+        "unit": "token",
+        "values": [
+          256,
+          256,
+          256,
+          256
+        ],
+        "status": "已核验配对输出长度",
+        "source": {
+          "source_id": "paired",
+          "json_pointer": "/verification/source_checks"
+        },
+        "raw_json_key": "output_lens"
+      },
+      {
+        "key": "max_concurrency",
+        "label": "客户端最大并发",
+        "unit": "请求",
+        "values": [
+          4,
+          4,
+          4,
+          4
+        ],
+        "status": "用例配置"
+      },
+      {
+        "key": "formal_attempts",
+        "label": "正式尝试数（每侧）",
+        "unit": "条",
+        "values": [
+          32,
+          32,
+          32,
+          32
+        ],
+        "status": "正式；不含预热"
+      },
+      {
+        "key": "common_success",
+        "label": "双方同输入且共同成功数",
+        "unit": "对",
+        "values": [
+          27,
+          27,
+          27,
+          27
+        ],
+        "status": "每种形态各自配对；不是跨四列共同集合"
+      },
+      {
+        "key": "successes",
+        "label": "各侧正式成功数",
+        "unit": "条",
+        "values": [
+          30,
+          29,
+          27,
+          32
+        ],
+        "status": "不可直接用各侧成功均值替代共同配对均值"
+      },
+      {
+        "key": "external_hit_percent",
+        "label": "P侧外部KV token命中率",
+        "unit": "%",
+        "values": [
+          null,
+          100.0,
+          null,
+          100.0
+        ],
+        "display_null": [
+          "不启用",
+          null,
+          "不启用",
+          null
+        ],
+        "status": "全部32条正式尝试；不是27对延迟的分母",
+        "source": {
+          "source_id": "report_data",
+          "json_pointer": "/cache_hit_supplement"
+        }
+      },
+      {
+        "key": "pure_prefill_ms",
+        "label": "平均Prefill纯计算时间",
+        "unit": "毫秒",
+        "values": [
+          null,
+          null,
+          null,
+          null
+        ],
+        "status": "NOT_VERIFIED",
+        "reason": "没有这27对请求同边界的纯Prefill设备执行均值。P窗口包含缓存恢复、调度、模型/MTP/采样与结果推进；不能拿TTFT或全32条P窗口冒充。"
+      },
+      {
+        "key": "d_decode_ms",
+        "label": "平均Decode：D模型执行",
+        "unit": "毫秒",
+        "values": [
+          null,
+          null,
+          null,
+          null
+        ],
+        "status": "NOT_VERIFIED",
+        "reason": "既有结构数据没有完整D模型独立执行区间。首token后客户端耗时另列，不等于D纯执行，也不从TTFT和TPOT拼凑。"
+      }
+    ],
+    "scope": "每种形态分别使用其27对同输入共同成功请求；两种形态不是同一个跨四列共同集合。只顺序各跑一轮，失败会间接影响闭环排队。",
+    "comparison_warning": "PP2为TP8/PP2/CP=true，PP1为TP16/PP1/CP=false；日期、P节点和观测/绑核也不同。禁止称只有PP改变。",
+    "supplemental_metric_note": "如需Prefill展示，可单独显示全32条P模型窗口，并明确其分母和非纯计算边界；不要填入本27对矩阵的纯Prefill空值。"
+  },
+  "historical_three_tier_pairs": [
+    {
+      "layout": "PP2",
+      "label": "PP2 4K·单并发",
+      "date": "2026-10-19",
+      "input_tokens": 4096,
+      "output_tokens": 256,
+      "concurrency": 1,
+      "n": 30,
+      "attempts_per_side": 32,
+      "on_success": 31,
+      "off_success": 31,
+      "on_hit_percent": 6.25,
+      "hit_denominator": "全部正式尝试",
+      "ttft_wins": 15,
+      "ttft_losses": 15,
+      "ttft_delta_median_s": 0.017327633453533053,
+      "metrics": [
+        {
+          "key": "ttft_s",
+          "unit": "s",
+          "off_mean": 0.9574770746131738,
+          "on_mean": 0.9211303176047901,
+          "delta": -0.036346757008383634,
+          "relative_percent": -3.796096843683483,
+          "n": 30,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "Original official ttfts[i], seconds"
+        },
+        {
+          "key": "tpot_ms",
+          "unit": "ms",
+          "off_mean": 22.566162747349225,
+          "on_mean": 23.099695529386985,
+          "delta": 0.53353278203776,
+          "relative_percent": 2.3643044145838843,
+          "n": 30,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "(exact-start client official_latency_s - original ttfts[i]) / (output_lens[i] - 1) * 1000"
+        },
+        {
+          "key": "e2el_s",
+          "unit": "s",
+          "off_mean": 6.7118485751872266,
+          "on_mean": 6.811552677598471,
+          "delta": 0.09970410241124483,
+          "relative_percent": 1.4854939186178528,
+          "n": 30,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "Exact-start matched client official_latency_s, seconds"
+        },
+        {
+          "key": "decode_s",
+          "unit": "s",
+          "off_mean": 5.754371500574052,
+          "on_mean": 5.890422359993681,
+          "delta": 0.1360508594196288,
+          "relative_percent": 2.3643044145838843,
+          "n": 30,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "exact-start client official_latency_s - original ttfts[i], seconds"
+        }
+      ],
+      "source": {
+        "source_id": "paired",
+        "json_pointer": "/groups/0/tiers/0"
+      },
+      "identity_source": "E:\\work\\ks\\output\\ks_ttft_observe_20261019\\causal_followup\\analysis-pipeline\\12g-vs-offdiag-client-paired.json"
+    },
+    {
+      "layout": "PP2",
+      "label": "PP2 4K·四并发",
+      "date": "2026-10-19",
+      "input_tokens": 4096,
+      "output_tokens": 256,
+      "concurrency": 4,
+      "n": 27,
+      "attempts_per_side": 32,
+      "on_success": 29,
+      "off_success": 30,
+      "on_hit_percent": 100,
+      "hit_denominator": "全部正式尝试",
+      "ttft_wins": 14,
+      "ttft_losses": 13,
+      "ttft_delta_median_s": -0.006277901120483875,
+      "metrics": [
+        {
+          "key": "ttft_s",
+          "unit": "s",
+          "off_mean": 1.1918283700253125,
+          "on_mean": 1.1110150462568358,
+          "delta": -0.08081332376847672,
+          "relative_percent": -6.78061756213777,
+          "n": 27,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "Original official ttfts[i], seconds"
+        },
+        {
+          "key": "tpot_ms",
+          "unit": "ms",
+          "off_mean": 24.731021960108347,
+          "on_mean": 25.199831875762108,
+          "delta": 0.46880991565376107,
+          "relative_percent": 1.895635030408216,
+          "n": 27,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "(exact-start client official_latency_s - original ttfts[i]) / (output_lens[i] - 1) * 1000"
+        },
+        {
+          "key": "e2el_s",
+          "unit": "s",
+          "off_mean": 7.498238969852941,
+          "on_mean": 7.5369721745761735,
+          "delta": 0.03873320472323272,
+          "relative_percent": 0.5165640209516154,
+          "n": 27,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "Exact-start matched client official_latency_s, seconds"
+        },
+        {
+          "key": "decode_s",
+          "unit": "s",
+          "off_mean": 6.306410599827628,
+          "on_mean": 6.425957128319338,
+          "delta": 0.11954652849170966,
+          "relative_percent": 1.895635030408216,
+          "n": 27,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "exact-start client official_latency_s - original ttfts[i], seconds"
+        }
+      ],
+      "source": {
+        "source_id": "paired",
+        "json_pointer": "/groups/0/tiers/1"
+      },
+      "identity_source": "E:\\work\\ks\\output\\ks_ttft_observe_20261019\\causal_followup\\analysis-pipeline\\12g-vs-offdiag-client-paired.json"
+    },
+    {
+      "layout": "PP2",
+      "label": "PP2 8K·单并发",
+      "date": "2026-10-19",
+      "input_tokens": 8192,
+      "output_tokens": 256,
+      "concurrency": 1,
+      "n": 16,
+      "attempts_per_side": 16,
+      "on_success": 16,
+      "off_success": 16,
+      "on_hit_percent": 18.75,
+      "hit_denominator": "全部正式尝试",
+      "ttft_wins": 6,
+      "ttft_losses": 10,
+      "ttft_delta_median_s": 0.011578735196962953,
+      "metrics": [
+        {
+          "key": "ttft_s",
+          "unit": "s",
+          "off_mean": 1.2119376670743804,
+          "on_mean": 1.145299804804381,
+          "delta": -0.06663786226999946,
+          "relative_percent": -5.498456239161486,
+          "n": 16,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "Original official ttfts[i], seconds"
+        },
+        {
+          "key": "tpot_ms",
+          "unit": "ms",
+          "off_mean": 23.74179431068364,
+          "on_mean": 24.696383703107415,
+          "delta": 0.9545893924237738,
+          "relative_percent": 4.020712924777614,
+          "n": 16,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "(exact-start client official_latency_s - original ttfts[i]) / (output_lens[i] - 1) * 1000"
+        },
+        {
+          "key": "e2el_s",
+          "unit": "s",
+          "off_mean": 7.266095216298709,
+          "on_mean": 7.442877649096772,
+          "delta": 0.17678243279806338,
+          "relative_percent": 2.4329771016696755,
+          "n": 16,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "Exact-start matched client official_latency_s, seconds"
+        },
+        {
+          "key": "decode_s",
+          "unit": "s",
+          "off_mean": 6.054157549224328,
+          "on_mean": 6.297577844292391,
+          "delta": 0.24342029506806284,
+          "relative_percent": 4.020712924777614,
+          "n": 16,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "exact-start client official_latency_s - original ttfts[i], seconds"
+        }
+      ],
+      "source": {
+        "source_id": "paired",
+        "json_pointer": "/groups/0/tiers/2"
+      },
+      "identity_source": "E:\\work\\ks\\output\\ks_ttft_observe_20261019\\causal_followup\\analysis-pipeline\\12g-vs-offdiag-client-paired.json"
+    },
+    {
+      "layout": "PP1",
+      "label": "PP1 4K·单并发",
+      "date": "2026-10-20",
+      "input_tokens": 4096,
+      "output_tokens": 256,
+      "concurrency": 1,
+      "n": 28,
+      "attempts_per_side": 32,
+      "on_success": 32,
+      "off_success": 28,
+      "on_hit_percent": 6.25,
+      "hit_denominator": "全部正式尝试",
+      "ttft_wins": 22,
+      "ttft_losses": 6,
+      "ttft_delta_median_s": -0.01642794837243855,
+      "metrics": [
+        {
+          "key": "ttft_s",
+          "unit": "s",
+          "off_mean": 1.6363926953303494,
+          "on_mean": 1.5803936204174533,
+          "delta": -0.05599907491289602,
+          "relative_percent": -3.422104918501312,
+          "n": 28,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "Original official ttfts[i], seconds"
+        },
+        {
+          "key": "tpot_ms",
+          "unit": "ms",
+          "off_mean": 24.051771745482245,
+          "on_mean": 22.289184148290328,
+          "delta": -1.7625875971919172,
+          "relative_percent": -7.328306687107123,
+          "n": 28,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "(exact-start client official_latency_s - original ttfts[i]) / (output_lens[i] - 1) * 1000"
+        },
+        {
+          "key": "e2el_s",
+          "unit": "s",
+          "off_mean": 7.7695944904283225,
+          "on_mean": 7.264135578231487,
+          "delta": -0.5054589121968354,
+          "relative_percent": -6.505602226982765,
+          "n": 28,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "Exact-start matched client official_latency_s, seconds"
+        },
+        {
+          "key": "decode_s",
+          "unit": "s",
+          "off_mean": 6.133201795097973,
+          "on_mean": 5.683741957814034,
+          "delta": -0.4494598372839391,
+          "relative_percent": -7.328306687107123,
+          "n": 28,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "exact-start client official_latency_s - original ttfts[i], seconds"
+        }
+      ],
+      "source": {
+        "source_id": "paired",
+        "json_pointer": "/groups/1/tiers/0"
+      },
+      "identity_source": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\pp1-control\\分析数据\\对照结果\\pp1-on-off.json"
+    },
+    {
+      "layout": "PP1",
+      "label": "PP1 4K·四并发",
+      "date": "2026-10-20",
+      "input_tokens": 4096,
+      "output_tokens": 256,
+      "concurrency": 4,
+      "n": 27,
+      "attempts_per_side": 32,
+      "on_success": 32,
+      "off_success": 27,
+      "on_hit_percent": 100,
+      "hit_denominator": "全部正式尝试",
+      "ttft_wins": 27,
+      "ttft_losses": 0,
+      "ttft_delta_median_s": -0.6748670847155154,
+      "metrics": [
+        {
+          "key": "ttft_s",
+          "unit": "s",
+          "off_mean": 2.096524698814998,
+          "on_mean": 1.1937372303671308,
+          "delta": -0.9027874684478672,
+          "relative_percent": -43.06114156242198,
+          "n": 27,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "Original official ttfts[i], seconds"
+        },
+        {
+          "key": "tpot_ms",
+          "unit": "ms",
+          "off_mean": 24.327412686400663,
+          "on_mean": 24.986738418942466,
+          "delta": 0.6593257325418023,
+          "relative_percent": 2.7102172394616098,
+          "n": 27,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "(exact-start client official_latency_s - original ttfts[i]) / (output_lens[i] - 1) * 1000"
+        },
+        {
+          "key": "e2el_s",
+          "unit": "s",
+          "off_mean": 8.300014933847168,
+          "on_mean": 7.565355527197459,
+          "delta": -0.7346594066497083,
+          "relative_percent": -8.851302226623636,
+          "n": 27,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "Exact-start matched client official_latency_s, seconds"
+        },
+        {
+          "key": "decode_s",
+          "unit": "s",
+          "off_mean": 6.203490235032169,
+          "on_mean": 6.371618296830328,
+          "delta": 0.16812806179815887,
+          "relative_percent": 2.7102172394616098,
+          "n": 27,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "exact-start client official_latency_s - original ttfts[i], seconds"
+        }
+      ],
+      "source": {
+        "source_id": "paired",
+        "json_pointer": "/groups/1/tiers/1"
+      },
+      "identity_source": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\pp1-control\\分析数据\\对照结果\\pp1-on-off.json"
+    },
+    {
+      "layout": "PP1",
+      "label": "PP1 8K·单并发",
+      "date": "2026-10-20",
+      "input_tokens": 8192,
+      "output_tokens": 256,
+      "concurrency": 1,
+      "n": 16,
+      "attempts_per_side": 16,
+      "on_success": 16,
+      "off_success": 16,
+      "on_hit_percent": 18.75,
+      "hit_denominator": "全部正式尝试",
+      "ttft_wins": 6,
+      "ttft_losses": 10,
+      "ttft_delta_median_s": 0.006723192520439625,
+      "metrics": [
+        {
+          "key": "ttft_s",
+          "unit": "s",
+          "off_mean": 2.7551354432071093,
+          "on_mean": 2.4794468500476796,
+          "delta": -0.27568859315942973,
+          "relative_percent": -10.006353547487123,
+          "n": 16,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "Original official ttfts[i], seconds"
+        },
+        {
+          "key": "tpot_ms",
+          "unit": "ms",
+          "off_mean": 24.836284017724477,
+          "on_mean": 22.67153496447695,
+          "delta": -2.164749053247526,
+          "relative_percent": -8.716074641853211,
+          "n": 16,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "(exact-start client official_latency_s - original ttfts[i]) / (output_lens[i] - 1) * 1000"
+        },
+        {
+          "key": "e2el_s",
+          "unit": "s",
+          "off_mean": 9.088387867726851,
+          "on_mean": 8.260688265989302,
+          "delta": -0.8276996017375495,
+          "relative_percent": -9.107221366252826,
+          "n": 16,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "Exact-start matched client official_latency_s, seconds"
+        },
+        {
+          "key": "decode_s",
+          "unit": "s",
+          "off_mean": 6.333252424519742,
+          "on_mean": 5.781241415941622,
+          "delta": -0.5520110085781198,
+          "relative_percent": -8.716074641853222,
+          "n": 16,
+          "scope": "Same shared successful input-pair indices only; arithmetic mean of per-request values; delta=ON-OFF, relative_percent=(ON/OFF-1)*100; lower latency is better",
+          "formula": "exact-start client official_latency_s - original ttfts[i], seconds"
+        }
+      ],
+      "source": {
+        "source_id": "paired",
+        "json_pointer": "/groups/1/tiers/2"
+      },
+      "identity_source": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\pp1-control\\分析数据\\对照结果\\pp1-on-off.json"
+    }
+  ],
+  "supplement_all_formal_p_windows": [
+    {
+      "case_id": "19-on-diag-12g",
+      "tier": 2,
+      "metric_key": "p_core_ms",
+      "mean_ms": 504.2160245,
+      "n": 32,
+      "scope": "Per-formal-request P core host window: first related core batch enqueue -> completion of the last related positive compute batch. Includes cache restore and scheduler advancement when present, model/MTP/sample and core result consumption; excludes HTTP/proxy ingress and egress. Not pure NPU compute or TTFT.",
+      "source": [
+        "E:\\work\\ks\\output\\ks_ttft_observe_20261019\\causal_followup\\analysis-pipeline\\on-12g-full-analysis.json"
+      ],
+      "notes": [
+        "Only formal identities; warmups excluded.",
+        "C4 is request-weighted: requests may share a physical batch; do not sum these windows as independent execution time.",
+        "Includes completed P windows even if the downstream client request later failed."
+      ],
+      "formal_n": 32,
+      "label": "PP2 开启LMCache",
+      "source_pointer": {
+        "source_id": "report_data",
+        "json_pointer": "/stage_time_supplement/46"
+      },
+      "warning": "全部32条P正式窗口；包含后来D/客户端失败的请求，非上面27对共同成功集合；不是纯Prefill。"
+    },
+    {
+      "case_id": "19-off-diag",
+      "tier": 2,
+      "metric_key": "p_core_ms",
+      "mean_ms": 554.9164653125,
+      "n": 32,
+      "scope": "Per-formal-request P core host window: first related core batch enqueue -> completion of the last related positive compute batch. Includes cache restore and scheduler advancement when present, model/MTP/sample and core result consumption; excludes HTTP/proxy ingress and egress. Not pure NPU compute or TTFT.",
+      "source": [
+        "E:\\work\\ks\\output\\ks_ttft_observe_20261019\\causal_followup\\analysis-pipeline\\off-diag-full-analysis.json"
+      ],
+      "notes": [
+        "Only formal identities; warmups excluded.",
+        "C4 is request-weighted: requests may share a physical batch; do not sum these windows as independent execution time.",
+        "Includes completed P windows even if the downstream client request later failed."
+      ],
+      "formal_n": 32,
+      "label": "PP2 关闭LMCache",
+      "source_pointer": {
+        "source_id": "report_data",
+        "json_pointer": "/stage_time_supplement/52"
+      },
+      "warning": "全部32条P正式窗口；包含后来D/客户端失败的请求，非上面27对共同成功集合；不是纯Prefill。"
+    },
+    {
+      "case_id": "20-pp1-on",
+      "tier": 2,
+      "metric_key": "p_core_ms",
+      "mean_ms": 623.631222375,
+      "n": 32,
+      "scope": "Per-formal-request P core host window: first related core batch enqueue -> completion of the last related positive compute batch. Includes cache restore and scheduler advancement when present, model/MTP/sample and core result consumption; excludes HTTP/proxy ingress and egress. Not pure NPU compute or TTFT.",
+      "source": [
+        "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\pp1-control\\分析数据\\对照结果\\P动作收支.json"
+      ],
+      "notes": [
+        "All formal P windows; warmups excluded.",
+        "Includes P-completed requests that later failed at D/client; P n differs from successful client n.",
+        "C4 request windows can share physical batches."
+      ],
+      "formal_n": 32,
+      "label": "PP1 开启LMCache",
+      "source_pointer": {
+        "source_id": "report_data",
+        "json_pointer": "/stage_time_supplement/64"
+      },
+      "warning": "全部32条P正式窗口；包含后来D/客户端失败的请求，非上面27对共同成功集合；不是纯Prefill。"
+    },
+    {
+      "case_id": "20-pp1-off",
+      "tier": 2,
+      "metric_key": "p_core_ms",
+      "mean_ms": 1532.9166185625,
+      "n": 32,
+      "scope": "Per-formal-request P core host window: first related core batch enqueue -> completion of the last related positive compute batch. Includes cache restore and scheduler advancement when present, model/MTP/sample and core result consumption; excludes HTTP/proxy ingress and egress. Not pure NPU compute or TTFT.",
+      "source": [
+        "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\pp1-control\\分析数据\\对照结果\\P动作收支.json"
+      ],
+      "notes": [
+        "All formal P windows; warmups excluded.",
+        "Includes P-completed requests that later failed at D/client; P n differs from successful client n.",
+        "C4 request windows can share physical batches."
+      ],
+      "formal_n": 32,
+      "label": "PP1 关闭LMCache",
+      "source_pointer": {
+        "source_id": "report_data",
+        "json_pointer": "/stage_time_supplement/70"
+      },
+      "warning": "全部32条P正式窗口；包含后来D/客户端失败的请求，非上面27对共同成功集合；不是纯Prefill。"
+    }
+  ],
+  "historical_two_sample_action_budget": [
+    {
+      "layout": "PP2",
+      "n": 2,
+      "sampling": "历史同输入、全命中ON及对应OFF各两条",
+      "off_compute_batch_ms": 447.87,
+      "on_compute_batch_ms": 369.309,
+      "saved_ms": 78.561,
+      "saved_percent": 17.54,
+      "restore_and_advance_ms": 87.733,
+      "p_window_delta_ms": 9.172,
+      "p_window_delta_percent": 2.05,
+      "source": {
+        "source_id": "historical_action_table"
+      },
+      "boundary": "主机动作窗口；非纯NPU算时、非整档TTFT、非C4整档均值。四舍五入会有微小收支残差。"
+    },
+    {
+      "layout": "PP1",
+      "n": 2,
+      "sampling": "历史同输入、全命中ON及对应OFF各两条",
+      "off_compute_batch_ms": 1222.667,
+      "on_compute_batch_ms": 446.835,
+      "saved_ms": 775.833,
+      "saved_percent": 63.45,
+      "restore_and_advance_ms": 122.228,
+      "p_window_delta_ms": -653.604,
+      "p_window_delta_percent": -53.46,
+      "source": {
+        "source_id": "historical_action_table"
+      },
+      "boundary": "主机动作窗口；非纯NPU算时、非整档TTFT、非C4整档均值。四舍五入会有微小收支残差。"
+    }
+  ],
+  "today_diagnostic_scope": {
+    "label": "10月21日22条独立诊断，不是原正式benchmark",
+    "request_count": 22,
+    "success_count": 22,
+    "batches": [
+      {
+        "label": "PP1带CANN",
+        "requests": 6,
+        "effective_cold_hot": 4,
+        "warmups": 2
+      },
+      {
+        "label": "PP2带CANN",
+        "requests": 6,
+        "effective_cold_hot": 4,
+        "warmups": 2
+      },
+      {
+        "label": "PP2无CANN热态控制",
+        "requests": 6
+      },
+      {
+        "label": "PP2追加四并发命中诊断",
+        "requests": 4
+      }
+    ],
+    "lmcache_on": true,
+    "new_OFF_requests": 0,
+    "output_tokens": 256,
+    "c4_diagnostic_input": "同一个已缓存4K输入同时发4条；不是原32条C4正式用例。",
+    "source": {
+      "source_id": "diagnostic_scope"
+    }
+  },
+  "sfa_device_observations": [
+    {
+      "label": "PP1 4K 冷输入（ON未命中）",
+      "lmcache_on": true,
+      "layout": "PP1",
+      "input_state": "cold",
+      "rank": 0,
+      "phase": "主模型78层；排除MTP",
+      "calls": 78,
+      "duration_sum_ms": 822.0711260000002,
+      "per_call_median_ms": 10.545450500000001,
+      "source": {
+        "source_id": "sfa_work",
+        "json_pointer": "/observed_pp1/0"
+      }
+    },
+    {
+      "label": "PP1 4K 热输入（ON命中）",
+      "lmcache_on": true,
+      "layout": "PP1",
+      "input_state": "hot",
+      "rank": 0,
+      "phase": "主模型78层；排除MTP",
+      "calls": 78,
+      "duration_sum_ms": 6.850735500000002,
+      "per_call_median_ms": 0.0874115,
+      "source": {
+        "source_id": "sfa_work",
+        "json_pointer": "/observed_pp1/1"
+      }
+    },
+    {
+      "label": "PP1 8K 冷输入（ON未命中）",
+      "lmcache_on": true,
+      "layout": "PP1",
+      "input_state": "cold",
+      "rank": 0,
+      "phase": "主模型78层；排除MTP",
+      "calls": 78,
+      "duration_sum_ms": 1646.0862465000007,
+      "per_call_median_ms": 21.10800175,
+      "source": {
+        "source_id": "sfa_work",
+        "json_pointer": "/observed_pp1/2"
+      }
+    },
+    {
+      "label": "PP1 8K 热输入（ON命中）",
+      "lmcache_on": true,
+      "layout": "PP1",
+      "input_state": "hot",
+      "rank": 0,
+      "phase": "主模型78层；排除MTP",
+      "calls": 78,
+      "duration_sum_ms": 6.899275500000001,
+      "per_call_median_ms": 0.087492,
+      "source": {
+        "source_id": "sfa_work",
+        "json_pointer": "/observed_pp1/3"
+      }
+    },
+    {
+      "label": "PP2 8K 冷输入（ON未命中），CP首片",
+      "lmcache_on": true,
+      "layout": "PP2",
+      "input_state": "cold",
+      "rank": 0,
+      "phase": "前41层主模型；不能与其他rank直接相加作请求时间",
+      "calls": 41,
+      "duration_sum_ms": 62.780392,
+      "per_call_median_ms": 1.532451,
+      "source": {
+        "source_id": "sfa_work",
+        "json_pointer": "/observed_pp2/0"
+      }
+    },
+    {
+      "label": "PP2 8K 冷输入（ON未命中），CP第二片",
+      "lmcache_on": true,
+      "layout": "PP2",
+      "input_state": "cold",
+      "rank": 1,
+      "phase": "前41层主模型；不能与其他rank直接相加作请求时间",
+      "calls": 41,
+      "duration_sum_ms": 126.97556,
+      "per_call_median_ms": 3.09702,
+      "source": {
+        "source_id": "sfa_work",
+        "json_pointer": "/observed_pp2/1"
+      }
+    },
+    {
+      "label": "PP2 8K 冷输入（ON未命中），CP末片",
+      "lmcache_on": true,
+      "layout": "PP2",
+      "input_state": "cold",
+      "rank": 7,
+      "phase": "前41层主模型；不能与其他rank直接相加作请求时间",
+      "calls": 41,
+      "duration_sum_ms": 128.851856,
+      "per_call_median_ms": 3.142803,
+      "source": {
+        "source_id": "sfa_work",
+        "json_pointer": "/observed_pp2/7"
+      }
+    },
+    {
+      "label": "PP2 8K 热输入（ON命中），首CP片",
+      "lmcache_on": true,
+      "layout": "PP2",
+      "input_state": "hot",
+      "rank": 0,
+      "phase": "前41层；物理shape不证明各rank都有一个有效query",
+      "calls": 41,
+      "duration_sum_ms": 3.936716,
+      "per_call_median_ms": 0.09528199999999999,
+      "source": {
+        "source_id": "sfa_summary",
+        "json_pointer": "/sfa/7"
+      }
+    },
+    {
+      "label": "PP2 8K 热输入（ON命中），末CP片",
+      "lmcache_on": true,
+      "layout": "PP2",
+      "input_state": "hot",
+      "rank": 7,
+      "phase": "前41层；物理shape不证明各rank都有一个有效query",
+      "calls": 41,
+      "duration_sum_ms": 0.722029,
+      "per_call_median_ms": 0.01598,
+      "source": {
+        "source_id": "sfa_summary",
+        "json_pointer": "/sfa/15"
+      }
+    }
+  ],
+  "sfa_kernel_identity": {
+    "same_runtime_kernel_name_PP1_PP2": true,
+    "runtime_kernel_names": [
+      "KvQuantSparseFlashAttention_26792e88a11d10cede99fb52f262ed98_1158"
+    ],
+    "tiling_key": 1158,
+    "kernel_type": "MIX_AIC",
+    "aic_aiv_task_ratio": "1:2",
+    "scope": "已核对冷8K profile的完整kernel名和安装catalog选择；不等于源码构建身份或所有动态tiling值已证明。",
+    "source_to_object_build_match": "NOT_VERIFIED",
+    "source": {
+      "source_id": "sfa_identity",
+      "json_pointer": "/PP1_and_PP2_actual_kernel_name_and_selected_key_match"
+    }
+  },
+  "sfa_source_work_model": {
+    "status": "源码推断，非实测FLOPs/流量/指令次数",
+    "assumptions": [
+      "完整冷8K有效输入",
+      "topk2048",
+      "CP连续query切片",
+      "24个AIC组按query数均分",
+      "每个KV子任务512行"
+    ],
+    "selected_models": [
+      {
+        "label": "PP1：每卡8192个query、4个heads",
+        "status": "SOURCE_DERIVED_MODEL_NOT_RUNTIME_TILING_PROOF",
+        "query_count": 8192,
+        "heads": 4,
+        "global_query_start": 0,
+        "global_query_end_exclusive": 8192,
+        "kv_context_at_slice_end": 8192,
+        "selected_kv_rows_total": 14681088,
+        "logical_query_head_kv_pairs_total": 58724352,
+        "m16_padded_query_head_kv_pairs_total": 234897408,
+        "aic_groups_assumed": 24,
+        "query_rows_per_full_group": 342,
+        "selected_kv_rows_group_mean": 611712.0,
+        "selected_kv_rows_group_max": 700416,
+        "s2_512_chunks_group_max": 1368,
+        "merge_kv_pipeline_invocations_total": 29696,
+        "merge_kv_pipeline_invocations_group_max": 1368,
+        "merge_kv_entry_count_across_two_aiv": 59392,
+        "merge_kv_entry_boundary": "Two AIV subcores each enter MergeKv per group task, processing separate halves; this does not double the logical payload.",
+        "mmad_instructions_total": 1157120,
+        "mm1_pipe_m_barriers_total": 694272,
+        "mm2_pipe_m_barriers_total": 462848,
+        "pipe_m_barriers_group_max": 54720,
+        "matrix_branch_boundary": "Predicted source instruction entries only; not measured instruction counts or assigned elapsed time.",
+        "packed_kv_logical_payload_bytes": 9630793728,
+        "expanded_kv_logical_payload_bytes": 16912613376,
+        "payload_byte_boundary": "Source-derived logical payload only: not measured HBM transactions, DMA padding, cache misses, or bus traffic.",
+        "source": {
+          "source_id": "sfa_work",
+          "json_pointer": "/models/pp1_cold8k"
+        }
+      },
+      {
+        "label": "PP2：CP首片每卡1024个query、64个heads",
+        "status": "SOURCE_DERIVED_MODEL_NOT_RUNTIME_TILING_PROOF",
+        "query_count": 1024,
+        "heads": 64,
+        "global_query_start": 0,
+        "global_query_end_exclusive": 1024,
+        "kv_context_at_slice_end": 1024,
+        "selected_kv_rows_total": 524800,
+        "logical_query_head_kv_pairs_total": 33587200,
+        "m16_padded_query_head_kv_pairs_total": 33587200,
+        "aic_groups_assumed": 24,
+        "query_rows_per_full_group": 43,
+        "selected_kv_rows_group_mean": 21866.666666666668,
+        "selected_kv_rows_group_max": 41624,
+        "s2_512_chunks_group_max": 86,
+        "merge_kv_pipeline_invocations_total": 1536,
+        "merge_kv_pipeline_invocations_group_max": 86,
+        "merge_kv_entry_count_across_two_aiv": 3072,
+        "merge_kv_entry_boundary": "Two AIV subcores each enter MergeKv per group task, processing separate halves; this does not double the logical payload.",
+        "mmad_instructions_total": 46080,
+        "mm1_pipe_m_barriers_total": 1536,
+        "mm2_pipe_m_barriers_total": 0,
+        "pipe_m_barriers_group_max": 192,
+        "matrix_branch_boundary": "Predicted source instruction entries only; not measured instruction counts or assigned elapsed time.",
+        "packed_kv_logical_payload_bytes": 344268800,
+        "expanded_kv_logical_payload_bytes": 604569600,
+        "payload_byte_boundary": "Source-derived logical payload only: not measured HBM transactions, DMA padding, cache misses, or bus traffic.",
+        "source": {
+          "source_id": "sfa_work",
+          "json_pointer": "/models/pp2_cold8k_cp0"
+        }
+      },
+      {
+        "label": "PP2：CP末片每卡1024个query、64个heads",
+        "status": "SOURCE_DERIVED_MODEL_NOT_RUNTIME_TILING_PROOF",
+        "query_count": 1024,
+        "heads": 64,
+        "global_query_start": 7168,
+        "global_query_end_exclusive": 8192,
+        "kv_context_at_slice_end": 8192,
+        "selected_kv_rows_total": 2097152,
+        "logical_query_head_kv_pairs_total": 134217728,
+        "m16_padded_query_head_kv_pairs_total": 134217728,
+        "aic_groups_assumed": 24,
+        "query_rows_per_full_group": 43,
+        "selected_kv_rows_group_mean": 87381.33333333333,
+        "selected_kv_rows_group_max": 88064,
+        "s2_512_chunks_group_max": 172,
+        "merge_kv_pipeline_invocations_total": 4096,
+        "merge_kv_pipeline_invocations_group_max": 172,
+        "merge_kv_entry_count_across_two_aiv": 8192,
+        "merge_kv_entry_boundary": "Two AIV subcores each enter MergeKv per group task, processing separate halves; this does not double the logical payload.",
+        "mmad_instructions_total": 163840,
+        "mm1_pipe_m_barriers_total": 0,
+        "mm2_pipe_m_barriers_total": 0,
+        "pipe_m_barriers_group_max": 0,
+        "matrix_branch_boundary": "Predicted source instruction entries only; not measured instruction counts or assigned elapsed time.",
+        "packed_kv_logical_payload_bytes": 1375731712,
+        "expanded_kv_logical_payload_bytes": 2415919104,
+        "payload_byte_boundary": "Source-derived logical payload only: not measured HBM transactions, DMA padding, cache misses, or bus traffic.",
+        "source": {
+          "source_id": "sfa_work",
+          "json_pointer": "/models/pp2_cold8k_cp7"
+        }
+      }
+    ],
+    "timing_comparisons": [
+      {
+        "comparison": "PP1_8K_vs_4K",
+        "observed_duration_ratio": 2.0016216234669155,
+        "left_observed_ms": 21.10800175,
+        "right_observed_ms": 10.545450500000001,
+        "model_ratios": {
+          "selected_kv_rows_total": 2.3331163547599676,
+          "selected_kv_rows_group_max": 2.0,
+          "s2_512_chunks_group_max": 2.0,
+          "logical_query_head_kv_pairs_total": 2.3331163547599676,
+          "m16_padded_query_head_kv_pairs_total": 2.3331163547599676
+        },
+        "relative_residual_vs_max_group_selected": 0.0008108117334577614,
+        "relative_residual_vs_max_group_chunks": 0.0008108117334577614,
+        "boundary": "Agreement is evidence of consistency, not identification of the loaded kernel or cause."
+      },
+      {
+        "comparison": "PP1_8K_vs_PP2_CP7",
+        "observed_duration_ratio": 6.716298078498716,
+        "left_observed_ms": 21.10800175,
+        "right_observed_ms": 3.142803,
+        "model_ratios": {
+          "selected_kv_rows_total": 7.00048828125,
+          "selected_kv_rows_group_max": 7.953488372093023,
+          "s2_512_chunks_group_max": 7.953488372093023,
+          "logical_query_head_kv_pairs_total": 0.437530517578125,
+          "m16_padded_query_head_kv_pairs_total": 1.7501220703125
+        },
+        "relative_residual_vs_max_group_selected": -0.15555316556887488,
+        "relative_residual_vs_max_group_chunks": -0.15555316556887488,
+        "boundary": "Agreement is evidence of consistency, not identification of the loaded kernel or cause."
+      },
+      {
+        "comparison": "PP2_CP0_vs_CP7",
+        "observed_duration_ratio": 0.48760644558376715,
+        "left_observed_ms": 1.532451,
+        "right_observed_ms": 3.142803,
+        "model_ratios": {
+          "selected_kv_rows_total": 0.250244140625,
+          "selected_kv_rows_group_max": 0.47265625,
+          "s2_512_chunks_group_max": 0.5,
+          "logical_query_head_kv_pairs_total": 0.250244140625,
+          "m16_padded_query_head_kv_pairs_total": 0.250244140625
+        },
+        "relative_residual_vs_max_group_selected": 0.031630165863176796,
+        "relative_residual_vs_max_group_chunks": -0.02478710883246571,
+        "boundary": "Agreement is evidence of consistency, not identification of the loaded kernel or cause."
+      },
+      {
+        "comparison": "PP2_CP1_vs_CP7",
+        "observed_duration_ratio": 0.9854324308586954,
+        "left_observed_ms": 3.09702,
+        "right_observed_ms": 3.142803,
+        "model_ratios": {
+          "selected_kv_rows_total": 0.750244140625,
+          "selected_kv_rows_group_max": 0.97265625,
+          "s2_512_chunks_group_max": 1.0,
+          "logical_query_head_kv_pairs_total": 0.750244140625,
+          "m16_padded_query_head_kv_pairs_total": 0.750244140625
+        },
+        "relative_residual_vs_max_group_selected": 0.013135350601710893,
+        "relative_residual_vs_max_group_chunks": -0.014567569141304637,
+        "boundary": "Agreement is evidence of consistency, not identification of the loaded kernel or cause."
+      }
+    ],
+    "all_cards_one_layer_logical_pairs": {
+      "pp1_16_tp_cards": 939589632,
+      "pp2_8_cp_cards": 939589632,
+      "equal": true,
+      "explanation": "一个query的64个heads，前者拆到16卡、各4heads；后者将query分到8卡、每卡64heads。全层理论算术配对相同，KV准备的重复与复用方式不同。不是实测硬件FLOPs。"
+    },
+    "barrier_note": "G4按16行对齐，完整128列tile满足小矩阵分支并进入PIPE_M；G64完整tile不满足。源码分支不等于已测耗时，也不授权删除同步。",
+    "physical_shape_warning": "PP1冷8K最后两次MTP仍传物理8192×4，但SFA仅约0.086ms；不能从物理长度猜有效query。",
+    "source": {
+      "source_id": "sfa_work",
+      "json_pointer": "/models"
+    }
+  },
+  "kv_restore_observations": {
+    "requests": [
+      {
+        "label": "PP1 8K 带CANN热态诊断",
+        "layout": "PP1",
+        "group": "PP1",
+        "case": "pp1-8k-hot",
+        "request_id": "cmpl-7cfd5639-9ad4-4e85-adc2-6639ada81da8-0-ba5fa85f",
+        "READ_count": 16,
+        "one_handler_per_rank": true,
+        "serial_same_pid_tid_slot": true,
+        "handler_sum_ms_service_time_not_request_latency": 99.814,
+        "handler_mean_ms": 6.238,
+        "handler_envelope_ms": 102.004,
+        "enqueue_spread_ms": 13.338,
+        "queue_ms_median": 43.837,
+        "queue_ms_max": 85.199,
+        "partition_ms_medians": {
+          "before_staging": 0.702,
+          "staging_envelope": 0.553,
+          "after_staging_before_path": 0.891,
+          "transfer_path": 0.561,
+          "after_path_before_return": 1.921
+        },
+        "read_detail_ms_medians": {
+          "retrieve_detail.import_producer_event": 0.441,
+          "retrieve_detail.wait_producer_event": 0.04,
+          "retrieve_detail.release_producer_submit": 0.145,
+          "retrieve_detail.record_completion_event": 0.582,
+          "retrieve_detail.finish_read_submit": 0.166,
+          "retrieve_detail.export_completion_event": 0.077
+        },
+        "native_plan_calls": 64,
+        "attempted_payload_bytes_sum": 9443475456,
+        "payload_READ_coverage": 16,
+        "callback_join_counts": {
+          "release_INSTANCE_IMPORT_TOKEN:READY": 16,
+          "finish_UNKNOWN_NOT_ABSENT": 16
+        },
+        "attempted_payload_MiB": 9006.0,
+        "index_source_bytes_per_worker": 512,
+        "parts": {
+          "case": "pp1-8k-hot",
+          "parts": {
+            "before_staging": 15.06,
+            "staging_envelope": 15.116,
+            "after_staging_before_path": 16.75,
+            "transfer_path": 12.228,
+            "after_path_before_return": 40.664
+          },
+          "parts_sum": 99.81800000000001,
+          "details": {
+            "object_transfer_host_ms": 1.343,
+            "producer_wait_host_ms": 1.649,
+            "completion_record_host_ms": 26.742
+          },
+          "staging_copies": 256,
+          "objects": 256,
+          "launches": 64
+        },
+        "source": {
+          "source_id": "restore_pp1",
+          "json_pointer": "/requests/0"
+        },
+        "partition_source": {
+          "source_id": "restore_parts",
+          "json_pointer": "/0"
+        },
+        "boundary": "native计划为提交尝试；不是已测设备DMA字节、完成耗时或带宽。handler为缓存服务主机占用，不是客户端TTFT。",
+        "diagnostic_only": true
+      },
+      {
+        "label": "PP1 4K 带CANN热态诊断",
+        "layout": "PP1",
+        "group": "PP1",
+        "case": "pp1-4k-hot",
+        "request_id": "cmpl-bca01cba-1a4c-47a6-900f-f89644afa520-0-ab4e9eab",
+        "READ_count": 16,
+        "one_handler_per_rank": true,
+        "serial_same_pid_tid_slot": true,
+        "handler_sum_ms_service_time_not_request_latency": 84.241,
+        "handler_mean_ms": 5.265,
+        "handler_envelope_ms": 86.612,
+        "enqueue_spread_ms": 12.782,
+        "queue_ms_median": 40.781,
+        "queue_ms_max": 69.115,
+        "partition_ms_medians": {
+          "before_staging": 0.713,
+          "staging_envelope": 0.508,
+          "after_staging_before_path": 1.076,
+          "transfer_path": 0.491,
+          "after_path_before_return": 1.206
+        },
+        "read_detail_ms_medians": {
+          "retrieve_detail.import_producer_event": 0.436,
+          "retrieve_detail.wait_producer_event": 0.039,
+          "retrieve_detail.release_producer_submit": 0.302,
+          "retrieve_detail.record_completion_event": 0.447,
+          "retrieve_detail.finish_read_submit": 0.161,
+          "retrieve_detail.export_completion_event": 0.083
+        },
+        "native_plan_calls": 32,
+        "attempted_payload_bytes_sum": 4721737728,
+        "payload_READ_coverage": 16,
+        "callback_join_counts": {
+          "release_INSTANCE_IMPORT_TOKEN:READY": 16,
+          "finish_UNKNOWN_NOT_ABSENT": 16
+        },
+        "attempted_payload_MiB": 4503.0,
+        "index_source_bytes_per_worker": 256,
+        "parts": {
+          "case": "pp1-4k-hot",
+          "parts": {
+            "before_staging": 14.678,
+            "staging_envelope": 14.356,
+            "after_staging_before_path": 19.663,
+            "transfer_path": 10.91,
+            "after_path_before_return": 24.637
+          },
+          "parts_sum": 84.244,
+          "details": {
+            "object_transfer_host_ms": 1.266,
+            "producer_wait_host_ms": 1.665,
+            "completion_record_host_ms": 11.925
+          },
+          "staging_copies": 128,
+          "objects": 128,
+          "launches": 32
+        },
+        "source": {
+          "source_id": "restore_pp1",
+          "json_pointer": "/requests/1"
+        },
+        "partition_source": {
+          "source_id": "restore_parts",
+          "json_pointer": "/1"
+        },
+        "boundary": "native计划为提交尝试；不是已测设备DMA字节、完成耗时或带宽。handler为缓存服务主机占用，不是客户端TTFT。",
+        "diagnostic_only": true
+      },
+      {
+        "label": "PP2 4K 四并发热请求2",
+        "layout": "PP2",
+        "group": "PP2",
+        "case": "pp2-4k-hot-c4-2",
+        "request_id": "cmpl-1f59ac81-3e43-4f21-9946-639ed1ff3a06-0-b3dca996",
+        "READ_count": 16,
+        "one_handler_per_rank": true,
+        "serial_same_pid_tid_slot": true,
+        "handler_sum_ms_service_time_not_request_latency": 52.547,
+        "handler_mean_ms": 3.284,
+        "handler_envelope_ms": 153.063,
+        "enqueue_spread_ms": 30.583,
+        "queue_ms_median": 144.718,
+        "queue_ms_max": 195.488,
+        "partition_ms_medians": {
+          "before_staging": 0.508,
+          "staging_envelope": 0.397,
+          "after_staging_before_path": 0.71,
+          "transfer_path": 0.411,
+          "after_path_before_return": 0.923
+        },
+        "read_detail_ms_medians": {
+          "retrieve_detail.import_producer_event": 0.349,
+          "retrieve_detail.wait_producer_event": 0.034,
+          "retrieve_detail.release_producer_submit": 0.13,
+          "retrieve_detail.record_completion_event": 0.386,
+          "retrieve_detail.finish_read_submit": 0.151,
+          "retrieve_detail.export_completion_event": 0.068
+        },
+        "native_plan_calls": 32,
+        "attempted_payload_bytes_sum": 2360868864,
+        "payload_READ_coverage": 16,
+        "callback_join_counts": {
+          "release_INSTANCE_IMPORT_TOKEN:READY": 16,
+          "finish_UNKNOWN_NOT_ABSENT": 16
+        },
+        "attempted_payload_MiB": 2251.5,
+        "index_source_bytes_per_worker": 256,
+        "parts": {
+          "case": "pp2-4k-hot-c4-2",
+          "parts": {
+            "before_staging": 8.423,
+            "staging_envelope": 7.825,
+            "after_staging_before_path": 11.646,
+            "transfer_path": 7.321,
+            "after_path_before_return": 17.332
+          },
+          "parts_sum": 52.547000000000004,
+          "details": {
+            "object_transfer_host_ms": 1.135,
+            "producer_wait_host_ms": 0.768,
+            "completion_record_host_ms": 6.754
+          },
+          "staging_copies": 128,
+          "objects": 128,
+          "launches": 32
+        },
+        "source": {
+          "source_id": "restore_pp2",
+          "json_pointer": "/requests/0"
+        },
+        "partition_source": {
+          "source_id": "restore_parts",
+          "json_pointer": "/2"
+        },
+        "boundary": "native计划为提交尝试；不是已测设备DMA字节、完成耗时或带宽。handler为缓存服务主机占用，不是客户端TTFT。",
+        "diagnostic_only": true
+      },
+      {
+        "label": "PP2 4K 四并发热请求1",
+        "layout": "PP2",
+        "group": "PP2",
+        "case": "pp2-4k-hot-c4-1",
+        "request_id": "cmpl-3fe761ba-f8aa-48f4-86f7-ef4d53c38082-0-8e6c1b8f",
+        "READ_count": 16,
+        "one_handler_per_rank": true,
+        "serial_same_pid_tid_slot": true,
+        "handler_sum_ms_service_time_not_request_latency": 62.478,
+        "handler_mean_ms": 3.905,
+        "handler_envelope_ms": 157.497,
+        "enqueue_spread_ms": 32.39,
+        "queue_ms_median": 178.09,
+        "queue_ms_max": 222.011,
+        "partition_ms_medians": {
+          "before_staging": 0.501,
+          "staging_envelope": 0.407,
+          "after_staging_before_path": 0.734,
+          "transfer_path": 0.402,
+          "after_path_before_return": 0.909
+        },
+        "read_detail_ms_medians": {
+          "retrieve_detail.import_producer_event": 0.365,
+          "retrieve_detail.wait_producer_event": 0.034,
+          "retrieve_detail.release_producer_submit": 0.134,
+          "retrieve_detail.record_completion_event": 0.394,
+          "retrieve_detail.finish_read_submit": 0.143,
+          "retrieve_detail.export_completion_event": 0.068
+        },
+        "native_plan_calls": 32,
+        "attempted_payload_bytes_sum": 2360868864,
+        "payload_READ_coverage": 16,
+        "callback_join_counts": {
+          "release_INSTANCE_IMPORT_TOKEN:READY": 16,
+          "finish_UNKNOWN_NOT_ABSENT": 16
+        },
+        "attempted_payload_MiB": 2251.5,
+        "index_source_bytes_per_worker": 256,
+        "parts": {
+          "case": "pp2-4k-hot-c4-1",
+          "parts": {
+            "before_staging": 8.471,
+            "staging_envelope": 8.605,
+            "after_staging_before_path": 20.804,
+            "transfer_path": 7.647,
+            "after_path_before_return": 16.952
+          },
+          "parts_sum": 62.479,
+          "details": {
+            "object_transfer_host_ms": 1.068,
+            "producer_wait_host_ms": 0.776,
+            "completion_record_host_ms": 7.405
+          },
+          "staging_copies": 128,
+          "objects": 128,
+          "launches": 32
+        },
+        "source": {
+          "source_id": "restore_pp2",
+          "json_pointer": "/requests/1"
+        },
+        "partition_source": {
+          "source_id": "restore_parts",
+          "json_pointer": "/3"
+        },
+        "boundary": "native计划为提交尝试；不是已测设备DMA字节、完成耗时或带宽。handler为缓存服务主机占用，不是客户端TTFT。",
+        "diagnostic_only": true
+      },
+      {
+        "label": "PP2 4K 四并发热请求3",
+        "layout": "PP2",
+        "group": "PP2",
+        "case": "pp2-4k-hot-c4-3",
+        "request_id": "cmpl-414e7d3c-ae6c-42ab-8e68-66f75cc3c0c8-0-94e2a7b2",
+        "READ_count": 16,
+        "one_handler_per_rank": true,
+        "serial_same_pid_tid_slot": true,
+        "handler_sum_ms_service_time_not_request_latency": 89.548,
+        "handler_mean_ms": 5.597,
+        "handler_envelope_ms": 156.618,
+        "enqueue_spread_ms": 19.45,
+        "queue_ms_median": 89.498,
+        "queue_ms_max": 133.628,
+        "partition_ms_medians": {
+          "before_staging": 0.583,
+          "staging_envelope": 0.42,
+          "after_staging_before_path": 0.841,
+          "transfer_path": 0.446,
+          "after_path_before_return": 0.986
+        },
+        "read_detail_ms_medians": {
+          "retrieve_detail.import_producer_event": 0.414,
+          "retrieve_detail.wait_producer_event": 0.039,
+          "retrieve_detail.release_producer_submit": 0.144,
+          "retrieve_detail.record_completion_event": 0.406,
+          "retrieve_detail.finish_read_submit": 0.148,
+          "retrieve_detail.export_completion_event": 0.073
+        },
+        "native_plan_calls": 32,
+        "attempted_payload_bytes_sum": 2360868864,
+        "payload_READ_coverage": 16,
+        "callback_join_counts": {
+          "release_INSTANCE_IMPORT_TOKEN:READY": 16,
+          "finish_UNKNOWN_NOT_ABSENT": 16
+        },
+        "attempted_payload_MiB": 2251.5,
+        "index_source_bytes_per_worker": 256,
+        "parts": {
+          "case": "pp2-4k-hot-c4-3",
+          "parts": {
+            "before_staging": 11.968,
+            "staging_envelope": 17.533,
+            "after_staging_before_path": 22.079,
+            "transfer_path": 19.404,
+            "after_path_before_return": 18.566
+          },
+          "parts_sum": 89.55,
+          "details": {
+            "object_transfer_host_ms": 1.581,
+            "producer_wait_host_ms": 1.57,
+            "completion_record_host_ms": 7.138
+          },
+          "staging_copies": 128,
+          "objects": 128,
+          "launches": 32
+        },
+        "source": {
+          "source_id": "restore_pp2",
+          "json_pointer": "/requests/2"
+        },
+        "partition_source": {
+          "source_id": "restore_parts",
+          "json_pointer": "/4"
+        },
+        "boundary": "native计划为提交尝试；不是已测设备DMA字节、完成耗时或带宽。handler为缓存服务主机占用，不是客户端TTFT。",
+        "diagnostic_only": true
+      },
+      {
+        "label": "PP2 4K 带CANN热态诊断",
+        "layout": "PP2",
+        "group": "PP2",
+        "case": "pp2-4k-hot",
+        "request_id": "cmpl-4b579888-f0b6-4b54-a789-ded8f00003db-0-a34bf2a0",
+        "READ_count": 16,
+        "one_handler_per_rank": true,
+        "serial_same_pid_tid_slot": true,
+        "handler_sum_ms_service_time_not_request_latency": 73.561,
+        "handler_mean_ms": 4.598,
+        "handler_envelope_ms": 75.818,
+        "enqueue_spread_ms": 12.024,
+        "queue_ms_median": 37.624,
+        "queue_ms_max": 59.821,
+        "partition_ms_medians": {
+          "before_staging": 0.522,
+          "staging_envelope": 0.433,
+          "after_staging_before_path": 1.012,
+          "transfer_path": 0.423,
+          "after_path_before_return": 1.07
+        },
+        "read_detail_ms_medians": {
+          "retrieve_detail.import_producer_event": 0.433,
+          "retrieve_detail.wait_producer_event": 0.038,
+          "retrieve_detail.release_producer_submit": 0.278,
+          "retrieve_detail.record_completion_event": 0.443,
+          "retrieve_detail.finish_read_submit": 0.157,
+          "retrieve_detail.export_completion_event": 0.077
+        },
+        "native_plan_calls": 32,
+        "attempted_payload_bytes_sum": 2360868864,
+        "payload_READ_coverage": 16,
+        "callback_join_counts": {
+          "release_INSTANCE_IMPORT_TOKEN:READY": 16,
+          "finish_UNKNOWN_NOT_ABSENT": 16
+        },
+        "attempted_payload_MiB": 2251.5,
+        "index_source_bytes_per_worker": 256,
+        "parts": {
+          "case": "pp2-4k-hot",
+          "parts": {
+            "before_staging": 10.481,
+            "staging_envelope": 9.907,
+            "after_staging_before_path": 18.515,
+            "transfer_path": 10.924,
+            "after_path_before_return": 23.734
+          },
+          "parts_sum": 73.561,
+          "details": {
+            "object_transfer_host_ms": 1.374,
+            "producer_wait_host_ms": 1.799,
+            "completion_record_host_ms": 10.92
+          },
+          "staging_copies": 128,
+          "objects": 128,
+          "launches": 32
+        },
+        "source": {
+          "source_id": "restore_pp2",
+          "json_pointer": "/requests/3"
+        },
+        "partition_source": {
+          "source_id": "restore_parts",
+          "json_pointer": "/5"
+        },
+        "boundary": "native计划为提交尝试；不是已测设备DMA字节、完成耗时或带宽。handler为缓存服务主机占用，不是客户端TTFT。",
+        "diagnostic_only": true
+      },
+      {
+        "label": "PP2 8K 无CANN热态控制1",
+        "layout": "PP2",
+        "group": "PP2",
+        "case": "pp2-8k-hot-control-1",
+        "request_id": "cmpl-7199ad68-81c2-4fb6-a5fc-3436c4e2a407-0-b8fcc7c4",
+        "READ_count": 16,
+        "one_handler_per_rank": true,
+        "serial_same_pid_tid_slot": true,
+        "handler_sum_ms_service_time_not_request_latency": 83.038,
+        "handler_mean_ms": 5.19,
+        "handler_envelope_ms": 85.543,
+        "enqueue_spread_ms": 9.23,
+        "queue_ms_median": 38.481,
+        "queue_ms_max": 72.716,
+        "partition_ms_medians": {
+          "before_staging": 0.545,
+          "staging_envelope": 0.42,
+          "after_staging_before_path": 0.88,
+          "transfer_path": 0.546,
+          "after_path_before_return": 1.076
+        },
+        "read_detail_ms_medians": {
+          "retrieve_detail.import_producer_event": 0.431,
+          "retrieve_detail.wait_producer_event": 0.035,
+          "retrieve_detail.release_producer_submit": 0.142,
+          "retrieve_detail.record_completion_event": 0.429,
+          "retrieve_detail.finish_read_submit": 0.161,
+          "retrieve_detail.export_completion_event": 0.077
+        },
+        "native_plan_calls": 64,
+        "attempted_payload_bytes_sum": 4721737728,
+        "payload_READ_coverage": 16,
+        "callback_join_counts": {
+          "release_INSTANCE_IMPORT_TOKEN:READY": 16,
+          "finish_UNKNOWN_NOT_ABSENT": 16
+        },
+        "attempted_payload_MiB": 4503.0,
+        "index_source_bytes_per_worker": 512,
+        "parts": {
+          "case": "pp2-8k-hot-control-1",
+          "parts": {
+            "before_staging": 12.437,
+            "staging_envelope": 8.519,
+            "after_staging_before_path": 28.837,
+            "transfer_path": 12.718,
+            "after_path_before_return": 20.529
+          },
+          "parts_sum": 83.03999999999999,
+          "details": {
+            "object_transfer_host_ms": 1.606,
+            "producer_wait_host_ms": 1.669,
+            "completion_record_host_ms": 8.826
+          },
+          "staging_copies": 256,
+          "objects": 256,
+          "launches": 64
+        },
+        "source": {
+          "source_id": "restore_pp2",
+          "json_pointer": "/requests/4"
+        },
+        "partition_source": {
+          "source_id": "restore_parts",
+          "json_pointer": "/6"
+        },
+        "boundary": "native计划为提交尝试；不是已测设备DMA字节、完成耗时或带宽。handler为缓存服务主机占用，不是客户端TTFT。",
+        "diagnostic_only": true
+      },
+      {
+        "label": "PP2 8K 带CANN热态诊断",
+        "layout": "PP2",
+        "group": "PP2",
+        "case": "pp2-8k-hot",
+        "request_id": "cmpl-84ffe6b2-5edd-4931-9a2c-d167b6ed0114-0-8b935b2b",
+        "READ_count": 16,
+        "one_handler_per_rank": true,
+        "serial_same_pid_tid_slot": true,
+        "handler_sum_ms_service_time_not_request_latency": 77.102,
+        "handler_mean_ms": 4.819,
+        "handler_envelope_ms": 80.127,
+        "enqueue_spread_ms": 10.416,
+        "queue_ms_median": 38.619,
+        "queue_ms_max": 65.481,
+        "partition_ms_medians": {
+          "before_staging": 0.636,
+          "staging_envelope": 0.489,
+          "after_staging_before_path": 0.914,
+          "transfer_path": 0.572,
+          "after_path_before_return": 1.111
+        },
+        "read_detail_ms_medians": {
+          "retrieve_detail.import_producer_event": 0.455,
+          "retrieve_detail.wait_producer_event": 0.038,
+          "retrieve_detail.release_producer_submit": 0.147,
+          "retrieve_detail.record_completion_event": 0.446,
+          "retrieve_detail.finish_read_submit": 0.168,
+          "retrieve_detail.export_completion_event": 0.08
+        },
+        "native_plan_calls": 64,
+        "attempted_payload_bytes_sum": 4721737728,
+        "payload_READ_coverage": 16,
+        "callback_join_counts": {
+          "release_INSTANCE_IMPORT_TOKEN:READY": 16,
+          "finish_UNKNOWN_NOT_ABSENT": 16
+        },
+        "attempted_payload_MiB": 4503.0,
+        "index_source_bytes_per_worker": 512,
+        "parts": {
+          "case": "pp2-8k-hot",
+          "parts": {
+            "before_staging": 13.437,
+            "staging_envelope": 10.16,
+            "after_staging_before_path": 21.829,
+            "transfer_path": 12.358,
+            "after_path_before_return": 19.322
+          },
+          "parts_sum": 77.10600000000001,
+          "details": {
+            "object_transfer_host_ms": 1.295,
+            "producer_wait_host_ms": 1.281,
+            "completion_record_host_ms": 7.926
+          },
+          "staging_copies": 256,
+          "objects": 256,
+          "launches": 64
+        },
+        "source": {
+          "source_id": "restore_pp2",
+          "json_pointer": "/requests/5"
+        },
+        "partition_source": {
+          "source_id": "restore_parts",
+          "json_pointer": "/7"
+        },
+        "boundary": "native计划为提交尝试；不是已测设备DMA字节、完成耗时或带宽。handler为缓存服务主机占用，不是客户端TTFT。",
+        "diagnostic_only": true
+      },
+      {
+        "label": "PP2 4K 无CANN热态控制1",
+        "layout": "PP2",
+        "group": "PP2",
+        "case": "pp2-4k-hot-control-1",
+        "request_id": "cmpl-8a67e482-a16f-46cb-a7a7-7b945aed65c8-0-9e220885",
+        "READ_count": 16,
+        "one_handler_per_rank": true,
+        "serial_same_pid_tid_slot": true,
+        "handler_sum_ms_service_time_not_request_latency": 78.256,
+        "handler_mean_ms": 4.891,
+        "handler_envelope_ms": 80.525,
+        "enqueue_spread_ms": 9.467,
+        "queue_ms_median": 32.962,
+        "queue_ms_max": 67.478,
+        "partition_ms_medians": {
+          "before_staging": 0.537,
+          "staging_envelope": 0.444,
+          "after_staging_before_path": 0.818,
+          "transfer_path": 0.422,
+          "after_path_before_return": 1.061
+        },
+        "read_detail_ms_medians": {
+          "retrieve_detail.import_producer_event": 0.417,
+          "retrieve_detail.wait_producer_event": 0.038,
+          "retrieve_detail.release_producer_submit": 0.142,
+          "retrieve_detail.record_completion_event": 0.407,
+          "retrieve_detail.finish_read_submit": 0.158,
+          "retrieve_detail.export_completion_event": 0.074
+        },
+        "native_plan_calls": 32,
+        "attempted_payload_bytes_sum": 2360868864,
+        "payload_READ_coverage": 16,
+        "callback_join_counts": {
+          "release_INSTANCE_IMPORT_TOKEN:READY": 16,
+          "finish_UNKNOWN_NOT_ABSENT": 16
+        },
+        "attempted_payload_MiB": 2251.5,
+        "index_source_bytes_per_worker": 256,
+        "parts": {
+          "case": "pp2-4k-hot-control-1",
+          "parts": {
+            "before_staging": 11.44,
+            "staging_envelope": 11.088,
+            "after_staging_before_path": 20.838,
+            "transfer_path": 9.808,
+            "after_path_before_return": 25.081
+          },
+          "parts_sum": 78.255,
+          "details": {
+            "object_transfer_host_ms": 1.174,
+            "producer_wait_host_ms": 1.64,
+            "completion_record_host_ms": 12.908
+          },
+          "staging_copies": 128,
+          "objects": 128,
+          "launches": 32
+        },
+        "source": {
+          "source_id": "restore_pp2",
+          "json_pointer": "/requests/6"
+        },
+        "partition_source": {
+          "source_id": "restore_parts",
+          "json_pointer": "/8"
+        },
+        "boundary": "native计划为提交尝试；不是已测设备DMA字节、完成耗时或带宽。handler为缓存服务主机占用，不是客户端TTFT。",
+        "diagnostic_only": true
+      },
+      {
+        "label": "PP2 8K 无CANN热态控制2",
+        "layout": "PP2",
+        "group": "PP2",
+        "case": "pp2-8k-hot-control-2",
+        "request_id": "cmpl-91faa484-abf4-4251-b671-42b314224fd5-0-ba55e900",
+        "READ_count": 16,
+        "one_handler_per_rank": true,
+        "serial_same_pid_tid_slot": true,
+        "handler_sum_ms_service_time_not_request_latency": 101.507,
+        "handler_mean_ms": 6.344,
+        "handler_envelope_ms": 104.062,
+        "enqueue_spread_ms": 11.318,
+        "queue_ms_median": 37.427,
+        "queue_ms_max": 88.968,
+        "partition_ms_medians": {
+          "before_staging": 0.66,
+          "staging_envelope": 0.532,
+          "after_staging_before_path": 1.032,
+          "transfer_path": 0.575,
+          "after_path_before_return": 1.278
+        },
+        "read_detail_ms_medians": {
+          "retrieve_detail.import_producer_event": 0.443,
+          "retrieve_detail.wait_producer_event": 0.039,
+          "retrieve_detail.release_producer_submit": 0.151,
+          "retrieve_detail.record_completion_event": 0.468,
+          "retrieve_detail.finish_read_submit": 0.172,
+          "retrieve_detail.export_completion_event": 0.074
+        },
+        "native_plan_calls": 64,
+        "attempted_payload_bytes_sum": 4721737728,
+        "payload_READ_coverage": 16,
+        "callback_join_counts": {
+          "release_INSTANCE_IMPORT_TOKEN:READY": 16,
+          "finish_UNKNOWN_NOT_ABSENT": 16
+        },
+        "attempted_payload_MiB": 4503.0,
+        "index_source_bytes_per_worker": 512,
+        "parts": {
+          "case": "pp2-8k-hot-control-2",
+          "parts": {
+            "before_staging": 11.817,
+            "staging_envelope": 13.525,
+            "after_staging_before_path": 41.004,
+            "transfer_path": 12.748,
+            "after_path_before_return": 22.414
+          },
+          "parts_sum": 101.50800000000001,
+          "details": {
+            "object_transfer_host_ms": 1.379,
+            "producer_wait_host_ms": 2.621,
+            "completion_record_host_ms": 10.39
+          },
+          "staging_copies": 256,
+          "objects": 256,
+          "launches": 64
+        },
+        "source": {
+          "source_id": "restore_pp2",
+          "json_pointer": "/requests/7"
+        },
+        "partition_source": {
+          "source_id": "restore_parts",
+          "json_pointer": "/9"
+        },
+        "boundary": "native计划为提交尝试；不是已测设备DMA字节、完成耗时或带宽。handler为缓存服务主机占用，不是客户端TTFT。",
+        "diagnostic_only": true
+      },
+      {
+        "label": "PP2 4K 无CANN热态控制3",
+        "layout": "PP2",
+        "group": "PP2",
+        "case": "pp2-4k-hot-control-3",
+        "request_id": "cmpl-a50d1dda-d254-4a87-bc21-2b1033fa8ba2-0-91ad54d1",
+        "READ_count": 16,
+        "one_handler_per_rank": true,
+        "serial_same_pid_tid_slot": true,
+        "handler_sum_ms_service_time_not_request_latency": 62.747,
+        "handler_mean_ms": 3.922,
+        "handler_envelope_ms": 64.9,
+        "enqueue_spread_ms": 6.221,
+        "queue_ms_median": 30.42,
+        "queue_ms_max": 55.119,
+        "partition_ms_medians": {
+          "before_staging": 0.494,
+          "staging_envelope": 0.42,
+          "after_staging_before_path": 0.846,
+          "transfer_path": 0.436,
+          "after_path_before_return": 1.013
+        },
+        "read_detail_ms_medians": {
+          "retrieve_detail.import_producer_event": 0.41,
+          "retrieve_detail.wait_producer_event": 0.039,
+          "retrieve_detail.release_producer_submit": 0.143,
+          "retrieve_detail.record_completion_event": 0.404,
+          "retrieve_detail.finish_read_submit": 0.153,
+          "retrieve_detail.export_completion_event": 0.078
+        },
+        "native_plan_calls": 32,
+        "attempted_payload_bytes_sum": 2360868864,
+        "payload_READ_coverage": 16,
+        "callback_join_counts": {
+          "release_INSTANCE_IMPORT_TOKEN:READY": 16,
+          "finish_UNKNOWN_NOT_ABSENT": 16
+        },
+        "attempted_payload_MiB": 2251.5,
+        "index_source_bytes_per_worker": 256,
+        "parts": {
+          "case": "pp2-4k-hot-control-3",
+          "parts": {
+            "before_staging": 9.688,
+            "staging_envelope": 9.658,
+            "after_staging_before_path": 15.51,
+            "transfer_path": 8.312,
+            "after_path_before_return": 19.582
+          },
+          "parts_sum": 62.75,
+          "details": {
+            "object_transfer_host_ms": 1.213,
+            "producer_wait_host_ms": 1.329,
+            "completion_record_host_ms": 6.7
+          },
+          "staging_copies": 128,
+          "objects": 128,
+          "launches": 32
+        },
+        "source": {
+          "source_id": "restore_pp2",
+          "json_pointer": "/requests/8"
+        },
+        "partition_source": {
+          "source_id": "restore_parts",
+          "json_pointer": "/10"
+        },
+        "boundary": "native计划为提交尝试；不是已测设备DMA字节、完成耗时或带宽。handler为缓存服务主机占用，不是客户端TTFT。",
+        "diagnostic_only": true
+      },
+      {
+        "label": "PP2 4K 无CANN热态控制2",
+        "layout": "PP2",
+        "group": "PP2",
+        "case": "pp2-4k-hot-control-2",
+        "request_id": "cmpl-bfb2c389-cb8e-4b08-af91-42b3cf2b0dbd-0-9f20734a",
+        "READ_count": 16,
+        "one_handler_per_rank": true,
+        "serial_same_pid_tid_slot": true,
+        "handler_sum_ms_service_time_not_request_latency": 68.225,
+        "handler_mean_ms": 4.264,
+        "handler_envelope_ms": 71.024,
+        "enqueue_spread_ms": 10.726,
+        "queue_ms_median": 33.322,
+        "queue_ms_max": 57.35,
+        "partition_ms_medians": {
+          "before_staging": 0.539,
+          "staging_envelope": 0.448,
+          "after_staging_before_path": 0.871,
+          "transfer_path": 0.438,
+          "after_path_before_return": 1.055
+        },
+        "read_detail_ms_medians": {
+          "retrieve_detail.import_producer_event": 0.427,
+          "retrieve_detail.wait_producer_event": 0.036,
+          "retrieve_detail.release_producer_submit": 0.148,
+          "retrieve_detail.record_completion_event": 0.427,
+          "retrieve_detail.finish_read_submit": 0.159,
+          "retrieve_detail.export_completion_event": 0.076
+        },
+        "native_plan_calls": 32,
+        "attempted_payload_bytes_sum": 2360868864,
+        "payload_READ_coverage": 16,
+        "callback_join_counts": {
+          "release_INSTANCE_IMPORT_TOKEN:READY": 16,
+          "finish_UNKNOWN_NOT_ABSENT": 16
+        },
+        "attempted_payload_MiB": 2251.5,
+        "index_source_bytes_per_worker": 256,
+        "parts": {
+          "case": "pp2-4k-hot-control-2",
+          "parts": {
+            "before_staging": 10.996,
+            "staging_envelope": 10.657,
+            "after_staging_before_path": 16.898,
+            "transfer_path": 9.551,
+            "after_path_before_return": 20.124
+          },
+          "parts_sum": 68.226,
+          "details": {
+            "object_transfer_host_ms": 1.395,
+            "producer_wait_host_ms": 1.227,
+            "completion_record_host_ms": 7.16
+          },
+          "staging_copies": 128,
+          "objects": 128,
+          "launches": 32
+        },
+        "source": {
+          "source_id": "restore_pp2",
+          "json_pointer": "/requests/9"
+        },
+        "partition_source": {
+          "source_id": "restore_parts",
+          "json_pointer": "/11"
+        },
+        "boundary": "native计划为提交尝试；不是已测设备DMA字节、完成耗时或带宽。handler为缓存服务主机占用，不是客户端TTFT。",
+        "diagnostic_only": true
+      },
+      {
+        "label": "PP2 4K 四并发热请求4",
+        "layout": "PP2",
+        "group": "PP2",
+        "case": "pp2-4k-hot-c4-4",
+        "request_id": "cmpl-d978d17c-359f-47d3-8ef8-b43c8d175f27-0-ab1d88c3",
+        "READ_count": 16,
+        "one_handler_per_rank": true,
+        "serial_same_pid_tid_slot": true,
+        "handler_sum_ms_service_time_not_request_latency": 51.268,
+        "handler_mean_ms": 3.204,
+        "handler_envelope_ms": 159.67,
+        "enqueue_spread_ms": 27.711,
+        "queue_ms_median": 117.673,
+        "queue_ms_max": 175.43,
+        "partition_ms_medians": {
+          "before_staging": 0.543,
+          "staging_envelope": 0.408,
+          "after_staging_before_path": 0.743,
+          "transfer_path": 0.408,
+          "after_path_before_return": 0.897
+        },
+        "read_detail_ms_medians": {
+          "retrieve_detail.import_producer_event": 0.364,
+          "retrieve_detail.wait_producer_event": 0.034,
+          "retrieve_detail.release_producer_submit": 0.134,
+          "retrieve_detail.record_completion_event": 0.38,
+          "retrieve_detail.finish_read_submit": 0.142,
+          "retrieve_detail.export_completion_event": 0.066
+        },
+        "native_plan_calls": 32,
+        "attempted_payload_bytes_sum": 2360868864,
+        "payload_READ_coverage": 16,
+        "callback_join_counts": {
+          "release_INSTANCE_IMPORT_TOKEN:READY": 16,
+          "finish_UNKNOWN_NOT_ABSENT": 16
+        },
+        "attempted_payload_MiB": 2251.5,
+        "index_source_bytes_per_worker": 256,
+        "parts": {
+          "case": "pp2-4k-hot-c4-4",
+          "parts": {
+            "before_staging": 8.775,
+            "staging_envelope": 8.14,
+            "after_staging_before_path": 12.636,
+            "transfer_path": 6.781,
+            "after_path_before_return": 14.936
+          },
+          "parts_sum": 51.268,
+          "details": {
+            "object_transfer_host_ms": 1.076,
+            "producer_wait_host_ms": 0.607,
+            "completion_record_host_ms": 6.293
+          },
+          "staging_copies": 128,
+          "objects": 128,
+          "launches": 32
+        },
+        "source": {
+          "source_id": "restore_pp2",
+          "json_pointer": "/requests/10"
+        },
+        "partition_source": {
+          "source_id": "restore_parts",
+          "json_pointer": "/12"
+        },
+        "boundary": "native计划为提交尝试；不是已测设备DMA字节、完成耗时或带宽。handler为缓存服务主机占用，不是客户端TTFT。",
+        "diagnostic_only": true
+      },
+      {
+        "label": "PP2 8K 无CANN热态控制3",
+        "layout": "PP2",
+        "group": "PP2",
+        "case": "pp2-8k-hot-control-3",
+        "request_id": "cmpl-ecb30776-89e0-46a2-ad03-14c92bcace74-0-90ad8c50",
+        "READ_count": 16,
+        "one_handler_per_rank": true,
+        "serial_same_pid_tid_slot": true,
+        "handler_sum_ms_service_time_not_request_latency": 85.011,
+        "handler_mean_ms": 5.313,
+        "handler_envelope_ms": 87.6,
+        "enqueue_spread_ms": 17.076,
+        "queue_ms_median": 43.475,
+        "queue_ms_max": 66.806,
+        "partition_ms_medians": {
+          "before_staging": 0.759,
+          "staging_envelope": 0.528,
+          "after_staging_before_path": 0.928,
+          "transfer_path": 0.572,
+          "after_path_before_return": 1.104
+        },
+        "read_detail_ms_medians": {
+          "retrieve_detail.import_producer_event": 0.444,
+          "retrieve_detail.wait_producer_event": 0.041,
+          "retrieve_detail.release_producer_submit": 0.15,
+          "retrieve_detail.record_completion_event": 0.442,
+          "retrieve_detail.finish_read_submit": 0.171,
+          "retrieve_detail.export_completion_event": 0.087
+        },
+        "native_plan_calls": 64,
+        "attempted_payload_bytes_sum": 4721737728,
+        "payload_READ_coverage": 16,
+        "callback_join_counts": {
+          "release_INSTANCE_IMPORT_TOKEN:READY": 16,
+          "finish_UNKNOWN_NOT_ABSENT": 16
+        },
+        "attempted_payload_MiB": 4503.0,
+        "index_source_bytes_per_worker": 512,
+        "parts": {
+          "case": "pp2-8k-hot-control-3",
+          "parts": {
+            "before_staging": 14.525,
+            "staging_envelope": 12.979,
+            "after_staging_before_path": 21.685,
+            "transfer_path": 15.094,
+            "after_path_before_return": 20.731
+          },
+          "parts_sum": 85.01399999999998,
+          "details": {
+            "object_transfer_host_ms": 1.468,
+            "producer_wait_host_ms": 1.666,
+            "completion_record_host_ms": 7.323
+          },
+          "staging_copies": 256,
+          "objects": 256,
+          "launches": 64
+        },
+        "source": {
+          "source_id": "restore_pp2",
+          "json_pointer": "/requests/11"
+        },
+        "partition_source": {
+          "source_id": "restore_parts",
+          "json_pointer": "/13"
+        },
+        "boundary": "native计划为提交尝试；不是已测设备DMA字节、完成耗时或带宽。handler为缓存服务主机占用，不是客户端TTFT。",
+        "diagnostic_only": true
+      }
+    ],
+    "summary": {
+      "pp1_hot_requests": 2,
+      "pp2_hot_requests": 12,
+      "READs_total": 224,
+      "single_request_READs": 16,
+      "no_repeated_full_read_in_observed_requests": true,
+      "fixed_count_explanation": "同长度PP2计划字节为PP1一半，但READ16份不变，native为4K32次/8K64次不变，对象和索引次数也不变。数据减少，固定主机控制工作未同比减少。",
+      "not_a_dma_benchmark": true,
+      "no_exact_dma_end_or_hbm_bandwidth": true
+    },
+    "source": {
+      "source_id": "restore_explanation"
+    }
+  },
+  "teaching_points": [
+    {
+      "label": "先分清两种比较",
+      "text": "历史ON/OFF回答接入缓存后整体怎样；今天ON冷/热回答同一接法中命中后哪些工作少了。两者不能改名互代。",
+      "level": "已观察"
+    },
+    {
+      "label": "百分比的分母也变了",
+      "text": "PP1冷态原本有较多低效率的历史Attention执行，命中能省掉很大一块；PP2/CP布局冷态已经快，可省掉的时间更少。不是只把同样新增成本换一个分母，而是可删除的计算成本本身也不同。",
+      "level": "设备观察＋安装源码支持的解释"
+    },
+    {
+      "label": "数学相同，组织工作不同",
+      "text": "准备一个query要找稀疏KV地址、收集、反量化。4个heads用完一份准备与64个heads共用一份准备，摊销不同；小矩阵还会浪费对齐容量并进入额外同步分支。",
+      "level": "安装源码模型，贡献比例NOT_VERIFIED"
+    },
+    {
+      "label": "命中也不是跳过整个P",
+      "text": "末token仍需走模型各层及提交、量化/路由、通信和输出链；少算历史token不会按比例减少所有软件动作。",
+      "level": "源码与动作观察"
+    },
+    {
+      "label": "恢复不是只有搬多少字节",
+      "text": "16个worker仍各发一份READ，索引、event和native提交次数没有跟着字节减半。并发时还要等串行处理通路轮到本请求。",
+      "level": "实际READ计划及主机观测"
+    },
+    {
+      "label": "通知已经完成也可能还没被核心消费",
+      "text": "当前四并发诊断中，其他请求的KV完成信息搭载在较早请求的execute/sample结果链上；恢复完成被观察后，核心仍可能晚接收，造成前段可用时没有及时启动下一条。",
+      "level": "真实请求链；具体可优化收益NOT_VERIFIED",
+      "source": {
+        "source_id": "notification_chain"
+      }
+    }
+  ],
+  "evidence_levels": {
+    "已观察": "已有正式客户端结果、日志、profile或只读运行记录",
+    "源码推断": "当前安装文本支持动作关系；没有独立干预测得每分支贡献",
+    "理论解释": "与事实相容但尚不能分配独占因果或毫秒",
+    "NOT_VERIFIED": "当前材料没有完成对应验收",
+    "历史配置": "仅适用于记录日期，不能当当前服务状态"
+  },
+  "not_verified": [
+    "纯PP个数对全部收益差异的独立因果",
+    "动态实际query长度和topk索引值",
+    "真实HBM/L2字节与PIPE_M耗时贡献",
+    "源码到设备对象的精确构建对应",
+    "同27对请求的纯Prefill和纯D Decode执行均值",
+    "通知解耦方案实际提速",
+    "KS-MEM-001保持OPEN"
+  ],
+  "do_not_claim": [
+    "今天冷ON是OFF",
+    "同kernel名等于同工作量",
+    "heads多64/4倍所以KV搬运也多64/4倍",
+    "逻辑选择数等于实际HBM字节",
+    "主机handler包络等于DMA时间",
+    "客户端首token后耗时等于纯D计算",
+    "把各rank设备时间相加当请求时间",
+    "把TP/CP同步改变归结为纯PP效应"
+  ]
+}
