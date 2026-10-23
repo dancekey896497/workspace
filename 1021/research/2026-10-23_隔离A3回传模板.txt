@@ -7,6 +7,8 @@ vllm / vllm-ascend / torch / torch-npu：
 lmcache / lmcache-ascend / memfabric-hybrid：
 LMCache 与 LMCache-Ascend 实际安装路径及 commit：
 模型：Qwen3-8B
+参数档位：TP1+TP1 首次验证 / TP8+TP8 客户形态对照
+模型 seed / dtype / gpu-memory-utilization：1024 / bfloat16 / 0.92（实际不同请注明）
 模型本地路径、architectures、dtype：
 设备物理/逻辑映射与空闲设备：
 所选设备对的 topo 类型（附相关行）：
