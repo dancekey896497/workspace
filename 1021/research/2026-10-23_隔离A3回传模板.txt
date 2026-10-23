@@ -1,0 +1,23 @@
+轮次：run01
+当前阶段：S0 / S1 / S2 / S3 / S4 / S5 / S6 / S7
+执行位置：宿主机 / 容器（名称或镜像标签）
+Python 路径、版本；CPU 架构：
+驱动 / CANN / 固件 / L1 配套版本（不知道写未知）：
+vllm / vllm-ascend / torch / torch-npu：
+lmcache / lmcache-ascend / memfabric-hybrid：
+LMCache 与 LMCache-Ascend 实际安装路径及 commit：
+模型：Qwen3-8B
+模型本地路径、architectures、dtype：
+设备物理/逻辑映射与空闲设备：
+所选设备对的 topo 类型（附相关行）：
+ASCEND_RT_VISIBLE_DEVICES / ASCEND_VISIBLE_DEVICES：
+可用主机内存、/dev/shm 大小与可用空间：
+端口占用：
+GitHub 可拉；GitCode / 软件包源是否已知可访问：
+完整执行命令（S0 可省略）：
+结果：PASS / FAIL / NOT_VERIFIED
+成功证据：HTTP 状态、store/retrieve token 或 BM 读写结果
+首错及前后约 40–60 行：
+本轮实际改动或安装内容（没有写无）：
+上一版可用 commit（未建立写无）：
+备注：第一轮只做 S0；不需要上传全日志、模型或容器。
