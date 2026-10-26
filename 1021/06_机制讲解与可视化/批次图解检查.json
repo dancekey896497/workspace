@@ -1,0 +1,489 @@
+{
+  "status": "PASS",
+  "report": "E:\\work\\ks\\output\\03_性能劣化原因分析\\06_机制讲解与可视化\\批次与数据调度_图解.html",
+  "mapping": [
+    {
+      "value": "compute",
+      "items": 9,
+      "hasNote": true
+    },
+    {
+      "value": "control",
+      "items": 9,
+      "hasNote": true
+    },
+    {
+      "value": "resumed",
+      "items": 9,
+      "hasNote": true
+    }
+  ],
+  "states": [
+    {
+      "step": "0",
+      "view": "all",
+      "arrows": 3,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "step": "0",
+      "view": "control",
+      "arrows": 3,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "step": "0",
+      "view": "data",
+      "arrows": 0,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "step": "1",
+      "view": "all",
+      "arrows": 3,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "step": "1",
+      "view": "control",
+      "arrows": 0,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "step": "1",
+      "view": "data",
+      "arrows": 3,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "step": "2",
+      "view": "all",
+      "arrows": 2,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "step": "2",
+      "view": "control",
+      "arrows": 2,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "step": "2",
+      "view": "data",
+      "arrows": 1,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "step": "3",
+      "view": "all",
+      "arrows": 2,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "step": "3",
+      "view": "control",
+      "arrows": 2,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "step": "3",
+      "view": "data",
+      "arrows": 1,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "step": "4",
+      "view": "all",
+      "arrows": 2,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "step": "4",
+      "view": "control",
+      "arrows": 2,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "step": "4",
+      "view": "data",
+      "arrows": 1,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "step": "5",
+      "view": "all",
+      "arrows": 4,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "step": "5",
+      "view": "control",
+      "arrows": 3,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "step": "5",
+      "view": "data",
+      "arrows": 1,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    }
+  ],
+  "timeline": [
+    {
+      "range": "full",
+      "moment": "0",
+      "spans": 8,
+      "buttons": 1,
+      "explanation": 79,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "full",
+      "moment": "1",
+      "spans": 8,
+      "buttons": 1,
+      "explanation": 71,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "full",
+      "moment": "2",
+      "spans": 8,
+      "buttons": 1,
+      "explanation": 85,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "full",
+      "moment": "3",
+      "spans": 8,
+      "buttons": 1,
+      "explanation": 66,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "full",
+      "moment": "4",
+      "spans": 8,
+      "buttons": 1,
+      "explanation": 89,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "full",
+      "moment": "5",
+      "spans": 8,
+      "buttons": 1,
+      "explanation": 64,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "full",
+      "moment": "6",
+      "spans": 8,
+      "buttons": 1,
+      "explanation": 90,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "full",
+      "moment": "7",
+      "spans": 8,
+      "buttons": 1,
+      "explanation": 74,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "full",
+      "moment": "8",
+      "spans": 8,
+      "buttons": 1,
+      "explanation": 60,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "full",
+      "moment": "9",
+      "spans": 8,
+      "buttons": 1,
+      "explanation": 68,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "early",
+      "moment": "0",
+      "spans": 6,
+      "buttons": 1,
+      "explanation": 79,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "early",
+      "moment": "1",
+      "spans": 6,
+      "buttons": 1,
+      "explanation": 71,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "early",
+      "moment": "2",
+      "spans": 6,
+      "buttons": 1,
+      "explanation": 85,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "early",
+      "moment": "3",
+      "spans": 6,
+      "buttons": 1,
+      "explanation": 66,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "early",
+      "moment": "4",
+      "spans": 6,
+      "buttons": 1,
+      "explanation": 89,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "early",
+      "moment": "5",
+      "spans": 6,
+      "buttons": 1,
+      "explanation": 64,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "early",
+      "moment": "6",
+      "spans": 6,
+      "buttons": 1,
+      "explanation": 90,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "early",
+      "moment": "7",
+      "spans": 6,
+      "buttons": 1,
+      "explanation": 74,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "early",
+      "moment": "8",
+      "spans": 6,
+      "buttons": 1,
+      "explanation": 60,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "early",
+      "moment": "9",
+      "spans": 6,
+      "buttons": 1,
+      "explanation": 68,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "late",
+      "moment": "0",
+      "spans": 7,
+      "buttons": 1,
+      "explanation": 79,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "late",
+      "moment": "1",
+      "spans": 7,
+      "buttons": 1,
+      "explanation": 71,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "late",
+      "moment": "2",
+      "spans": 7,
+      "buttons": 1,
+      "explanation": 85,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "late",
+      "moment": "3",
+      "spans": 7,
+      "buttons": 1,
+      "explanation": 66,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "late",
+      "moment": "4",
+      "spans": 7,
+      "buttons": 1,
+      "explanation": 89,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "late",
+      "moment": "5",
+      "spans": 7,
+      "buttons": 1,
+      "explanation": 64,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "late",
+      "moment": "6",
+      "spans": 7,
+      "buttons": 1,
+      "explanation": 90,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "late",
+      "moment": "7",
+      "spans": 7,
+      "buttons": 1,
+      "explanation": 74,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "late",
+      "moment": "8",
+      "spans": 7,
+      "buttons": 1,
+      "explanation": 60,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    },
+    {
+      "range": "late",
+      "moment": "9",
+      "spans": 7,
+      "buttons": 1,
+      "explanation": 68,
+      "overflow": [],
+      "overlap": [],
+      "invalid": false
+    }
+  ],
+  "plotClick": "6",
+  "desktop": {
+    "sections": 6,
+    "firstSection": "example",
+    "pageOverflow": false,
+    "defaultFolded": true,
+    "placeholder": false
+  },
+  "mobile": {
+    "viewport": 390,
+    "content": 390,
+    "overflow": false
+  },
+  "navigation": {
+    "forward": "1",
+    "back": "0"
+  },
+  "missingLinks": [],
+  "jsErrors": [],
+  "screenshotSaved": false
+}

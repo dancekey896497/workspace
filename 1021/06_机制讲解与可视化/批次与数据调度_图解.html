@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>批与batch、数据流与调度流：PP＋LMCache等待图解</title>
+<style>
+:root{--ink:#24354b;--muted:#61728a;--line:#d8e2ee;--purple:#8054ba;--blue:#2678bc;--green:#218767;--orange:#b87519;--gray:#5e6b80;--paper:#f3f6fa}*{box-sizing:border-box}html{scroll-padding-top:24px;scroll-behavior:smooth}body{margin:0;background:var(--paper);color:var(--ink);font:17px/1.9 "Microsoft YaHei","Segoe UI",sans-serif}main{max-width:1160px;margin:auto;padding:30px 22px 65px}h1,h2,h3,p{margin:0 0 16px}h1{font-size:34px;line-height:1.45;max-width:980px}h2{font-size:25px;line-height:1.5}h3{font-size:19px;line-height:1.65;margin-top:26px}a{color:#2465a9;text-underline-offset:3px}header{padding:10px 0 24px}.meta{font-size:13px;color:var(--muted);margin-bottom:12px}.lead{font-size:20px;line-height:1.9;max-width:1000px}.answer{background:#eaf2fd;border-left:4px solid #5b89bd;padding:17px 21px;margin:20px 0}.answer p:last-child{margin:0}section{background:white;border:1px solid var(--line);border-radius:9px;margin:0 0 23px;padding:29px}.chapter{font-size:13px;color:#50749e;margin-bottom:8px}.toc{display:flex;gap:8px;flex-wrap:wrap;margin:20px 0 5px}.toc a{font-size:14px;text-decoration:none;padding:6px 11px;background:white;border:1px solid var(--line);border-radius:5px}.grid2,.grid3{display:grid;gap:15px;margin:20px 0}.grid2{grid-template-columns:1fr 1fr}.grid3{grid-template-columns:repeat(3,1fr)}.card{border:1px solid var(--line);border-radius:7px;padding:18px;background:#fbfdff}.card h3{margin:0 0 11px;font-size:18px}.card p{font-size:15px;margin-bottom:9px}.note{font-size:14px;color:#526781;background:#f4f7fb;padding:12px 16px;border-radius:5px;margin:17px 0}.small{font-size:13px;color:var(--muted)}.tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;background:#edf1f7;color:#4f6580;margin-bottom:8px}.tag.fact{background:#e8f5ed;color:#2a6c51}.tag.limit{background:#fff1dd;color:#8b652a}.bar-title{font-size:15px;font-weight:600;margin-bottom:10px}.mapping{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin:18px 0}.mapping>div{border:1px solid #cbd9e9;padding:18px;border-radius:6px;background:#f8fbff}.mapping h3{margin:0 0 10px;font-size:17px}.mapping ul{font-size:14px;padding-left:20px;margin:0}.mapping li{margin:6px 0}.mapping .origin{border-top:4px solid var(--purple)}.mapping .record{border-top:4px solid #8596b0}.mapping .tensor{border-top:4px solid var(--blue)}.toolbar{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin:17px 0}button,select{font:14px/1.65 "Microsoft YaHei",sans-serif;border:1px solid #b7c8dc;border-radius:5px;background:white;color:#35516f;padding:7px 11px;cursor:pointer}button[aria-pressed=true]{background:#2c639f;color:white;border-color:#2c639f}button:hover,select:hover{border-color:#739dc8}button:focus-visible,select:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid #9bbde5;outline-offset:3px}button:disabled{opacity:.4;cursor:default}.legend{display:flex;flex-wrap:wrap;gap:12px 20px;font-size:13px;margin:15px 0}.legend span:before{content:"";display:inline-block;width:23px;border-top:3px solid currentColor;margin-right:7px;vertical-align:middle}.legend .control{color:var(--purple)}.legend .control:before{border-top-style:dashed}.legend .kv{color:var(--green)}.legend .hidden{color:var(--blue)}.legend .mark{color:var(--orange)}.legend .mark:before{border-top-style:dotted}.legend .result{color:var(--gray)}.diagramwrap{overflow-x:auto;border:1px solid var(--line);border-radius:7px;background:#fcfdff}svg{display:block;width:100%;min-width:960px;height:auto}svg text{font-family:"Microsoft YaHei","Segoe UI",sans-serif;fill:#334d69;font-size:15px}svg .role-title{font-size:17px;font-weight:650;fill:#254d79}svg .subtext{font-size:13px;fill:#5f7692}svg .edge-label{font-size:14px}svg .muted-label{fill:#71839b;font-size:12px}.step-title{font-size:20px;color:#285986;font-weight:650;margin:20px 0 9px}.step-copy{font-size:17px;line-height:1.9;margin:0 0 14px}.steps{display:flex;gap:7px;flex-wrap:wrap}.steps button{font-size:13px;padding:6px 9px}.stepnav{display:flex;gap:10px;align-items:center}.step-counter{font-size:13px;color:var(--muted);min-width:70px;text-align:center}.identity{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0}.identity>div{border:1px solid var(--line);border-radius:5px;padding:11px 14px;font-size:14px}.identity b{color:#285b8a}.identity .message{background:#fff5e6;border-color:#e8cb9b}.gatebox{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin:17px 0}.gate{border:1px solid #d2ddec;padding:14px;border-radius:6px;background:#f8fafd;font-size:14px}.gate b{display:block;margin-bottom:6px;color:#40618b}.gate.active{border-color:#d9af68;background:#fff4de}.gate.active b{color:#8c601c}.gate p{margin:0;font-size:14px}.gate small{display:block;color:#6f7e92;margin-top:7px;font-size:12px}.tablewrap{overflow:auto;border:1px solid var(--line);border-radius:6px;margin:18px 0}table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.85}th,td{padding:12px 13px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{background:#f0f5fb}tr:last-child td{border-bottom:0}.quote{font-size:19px;line-height:1.9;border-left:4px solid #7296bd;padding:14px 20px;background:#f1f6fc;margin:22px 0}.waitflow{display:flex;flex-wrap:wrap;align-items:stretch;gap:8px;margin:20px 0}.waitflow>div{flex:1;min-width:170px;border:1px solid var(--line);border-radius:5px;padding:13px 14px;font-size:14px}.waitflow b{display:block;margin-bottom:5px}.waitflow .notification{border-color:#dfbc86;background:#fff5e6}.waitflow .model{background:#edf4ff}.slot-row{display:grid;grid-template-columns:1fr 1fr;gap:13px;margin:15px 0}.slot{border:2px solid #b9cce4;border-radius:7px;padding:16px;background:#f0f6fe}.slot.wait{border-color:#e0bc82;background:#fff6e7}.slot b{display:block;font-size:16px}.slot p{font-size:14px;margin:8px 0 0}details{border:1px solid var(--line);border-radius:6px;padding:12px 16px;margin:17px 0;font-size:14px;background:#fafcfe}summary{cursor:pointer;color:#315f90}details[open] summary{margin-bottom:13px}pre{overflow:auto;background:#17283c;color:#e0e9f4;padding:17px;border-radius:5px;font:13px/1.9 Consolas,"Microsoft YaHei",monospace;white-space:pre}pre .comment{color:#9db7a3}pre .name{color:#b7d2fb}pre .keyword{color:#d7b1e9}.source-list li{margin:8px 0;overflow-wrap:anywhere}.measure{font-size:27px;font-variant-numeric:tabular-nums;color:#285f97;line-height:1.5;margin:9px 0}.big-number{font-size:33px}.foot{font-size:13px;color:#687a90;padding:10px 8px 24px}.source-caption{font-size:13px;color:#60748d}.two-lines{border:1px solid #c5d9ee;border-radius:6px;padding:17px;margin:17px 0;background:#f7fbff}.two-lines p{margin:8px 0;font-size:15px}.walkarrow{font-size:24px;color:#8398b0}.sr-note{font-size:13px;color:#57718d}noscript{display:block;background:#fff4dc;padding:16px}.mobilehint{display:none}
+.timeline-points{display:flex;flex-wrap:wrap;gap:7px;margin:16px 0}.timeline-points button{font-size:13px;padding:6px 9px}.timeline-focus{padding:15px 18px;margin:17px 0;border-left:4px solid #6b93c0;background:#eef5fd;min-height:115px}.timeline-focus h3{font-size:18px;margin:0 0 8px}.timeline-focus p{font-size:15px;line-height:1.9;margin:0}.timeline-reader{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:17px 0}.timeline-reader>div{border:1px solid var(--line);border-radius:6px;padding:15px 17px;font-size:15px}.timeline-reader b{display:block;color:#315e8b;margin-bottom:7px}.timeline-reader p{font-size:14px;margin:0}.timeline-legend{display:flex;flex-wrap:wrap;gap:10px 19px;font-size:13px;margin:15px 0}.timeline-legend span:before{content:"";display:inline-block;width:18px;height:11px;border-radius:2px;margin-right:6px;background:var(--legend-color);vertical-align:middle}.timeline-plot{min-width:1000px}#timelineDiagram .lane-title{font-size:16px;font-weight:650}#timelineDiagram .lane-sub{font-size:12px;fill:#687d95}#timelineDiagram .time-axis{font-size:12px;fill:#61758b}#timelineDiagram .track-label{font-size:13px}#timelineDiagram .timeline-marker{cursor:pointer}.timeline-math{font:15px/1.9 Consolas,"Microsoft YaHei",monospace;padding:13px 16px;background:#f4f7fb;border-radius:5px;margin:15px 0}.timeline-storyline{font-size:18px;line-height:1.9;color:#294f7c}.timeline-scope{font-size:14px;line-height:1.9;color:#5d728b;margin:12px 0}.timeline-case{display:flex;gap:9px;flex-wrap:wrap;margin:16px 0}.timeline-case>span{border:1px solid #cddceb;border-radius:5px;padding:8px 12px;font-size:14px;background:#f9fbfe}.timeline-case .hit{background:#fff5e5;border-color:#e5c894}
+@media(max-width:760px){body{font-size:16px}main{padding:17px 11px 40px}h1{font-size:28px}h2{font-size:23px}section{padding:21px 16px}.lead{font-size:18px}.mapping,.grid2,.grid3,.gatebox,.identity,.slot-row,.timeline-reader{grid-template-columns:1fr}.tablewrap table{min-width:650px}.toolbar{gap:7px}.mobilehint{display:block;font-size:12px;color:#6b7f97}.step-title{font-size:18px}.toc a{font-size:13px}.quote{font-size:17px}}
+@media print{.toolbar,.toc,.steps,.stepnav{display:none}body{background:white;font-size:12px}main{padding:0;max-width:none}section{border:0;padding:18px 0;break-inside:auto}.diagramwrap{overflow:visible}svg{min-width:0}.gatebox,.mapping{break-inside:avoid}h2,h3{break-after:avoid}}
+</style></head>
+<body><main>
+<header><div class="meta">KS学习图解 · 2026年10月26日整理 · 使用已有源码与日志，未启动实验</div><h1>先看一个例子<br>KV已经恢复，一条请求为什么还没开始算？</h1>
+<p class="lead">两条请求同时推进。<b>“正在计算的请求”</b>走前后两段模型；<b>“缓存命中的请求”</b>在后台恢复历史KV。前段已经报告后者的本地KV就绪，但核心还没处理它，这时后段正在忙什么？</p>
+<nav class="toc" aria-label="页面目录"><a href="#example">先看并行时间线</a><a href="#batch">① 一次安排的三种表示</a><a href="#flows">② 点图看数据与消息</a><a href="#wait">③ 等待到底是哪一段</a><a href="#slots">④ 为什么知道了还不能马上算</a><a href="#proof">⑤ 日志与代码</a></nav>
+</header>
+
+<section id="example"><div class="chapter">从10月23日一条真实日志开始</div><h2>同一段时间，有的地方在推进，有的地方在等</h2>
+<div class="timeline-case"><span><b>正在计算的请求</b>　当前模型批实际只算它的1个token</span><span class="hit"><b>缓存命中的请求</b>　历史恢复在后台，剩余计算还没被提交</span></div>
+<p>把<b>前段一个worker检查到“缓存命中的请求”本地恢复完成</b>设为0ms。其他worker是否同时恢复好，要分别核对。横向是时间，纵向每一行跟踪一项活动或状态；相同横向位置表示它们在同一时段发生。</p>
+<div class="timeline-legend"><span style="--legend-color:#8cb8e6">正在计算请求的后段／输出仍在推进</span><span style="--legend-color:#edc17c">命中请求的消息或状态尚未处理</span><span style="--legend-color:#8fc9ae">已观察到就绪或状态更新</span><span style="--legend-color:#dbe2eb">这张记录没有展开的后续活动</span></div>
+<div class="toolbar"><label for="timelineZoom">时间范围</label><select id="timelineZoom"><option value="full">看完整窗口 · 0至220ms</option><option value="early">放大前段报告 · 0至5ms</option><option value="late">放大结果返回 · 170至220ms</option></select><span class="small">点下方时刻或图中的圆点，看当时谁在做什么。</span></div>
+<p class="mobilehint">时间线可左右滑动。开始几毫秒挤在一起时，可以切换放大范围。</p>
+<div class="diagramwrap"><svg id="timelineDiagram" class="timeline-plot" viewBox="0 0 1100 610" role="img" aria-labelledby="timelineTitle timelineDesc"><title id="timelineTitle">真实两请求的并行时间线</title><desc id="timelineDesc">五条泳道对齐展示前段worker、后段worker、执行器结果通路、核心中的命中请求状态，以及命中请求自己的计算是否提交。</desc></svg></div>
+<div class="timeline-points" role="group" aria-label="选择真实观测时刻"><button data-moment="0" aria-pressed="true">0ms · 本地KV就绪</button><button data-moment="1" aria-pressed="false">1.269ms · 报告完成</button><button data-moment="2" aria-pressed="false">2.614ms · 前段返回</button><button data-moment="3" aria-pressed="false">177.047ms · 后段模型返回</button><button data-moment="4" aria-pressed="false">205.535ms · MTP返回</button><button data-moment="5" aria-pressed="false">210.981ms · 输出事件结束</button><button data-moment="6" aria-pressed="false">213.509ms · 核心开始计数</button><button data-moment="7" aria-pressed="false">214.155ms · 报告聚齐</button><button data-moment="8" aria-pressed="false">216.943ms · 可安排</button><button data-moment="9" aria-pressed="false">218.530ms · 提交剩余计算</button></div>
+<div class="timeline-focus" aria-live="polite"><h3 id="momentTitle"></h3><p id="momentCopy"></p></div>
+<div class="timeline-reader"><div><b>谁还在推进工作？</b><p>后段仍在处理“正在计算的请求”的模型和输出阶段。蓝条标的是结果还没收尾的观测窗口，其中可能同时含算子、通信和内部等待，不能全叫纯设备计算。</p></div><div><b>谁在等谁？</b><p>缓存命中请求的完成消息已经产生，却还要沿当前模型批的结果通路交付。核心处理它以前，命中请求自己的剩余计算没有被提交。橙条跟踪的是消息／请求状态，不表示这段时间CPU完全闲着。</p></div></div>
+<p class="timeline-storyline">把这件事顺着说一遍<br><b>前段先报告命中请求的KV完成 → 后段仍在推进另一请求 → 当前结果通路尚未把报告交给核心处理 → 核心处理并确认所需报告后，才提交命中请求自己的计算。</b></p>
+<div class="timeline-math">本地KV报告产生 → 核心首次计数这份报告<br>213.509 − 1.269 = <b>212.240ms</b> 的消息处理窗口</div>
+<p class="timeline-scope">这212.240ms可能与其他分片恢复等工作重叠，尚未全部证明可删除；0ms也不代表所有KV同时完成。蓝条从观测窗口0ms起画，后段实际调用的起点未在图中重建。各行是并行活动，<b>不能把条形长度相加</b>。218.530ms只到提交安排，设备真正开算要另外确认。</p>
+<p class="source-caption"><a href="../../05_当前环境与实验准备/20261023_夜间验证/分析/PP2_通知链/pp2-on/本轮结论.md">查看这条真实请求、command 3402及原始日志行号</a>。图里没有补造设备算子耗时，也不把这一个例子推广成每条PP2请求固定多等200ms。</p>
+</section>
+
+<section id="batch"><div class="chapter">先把batch这个词讲清楚</div><h2>① 一次调度，怎样对应到核心记录和模型输入</h2>
+<p><b>“批”就是batch。</b> 同一次调度工作有安排表、有尚未收尾的记录，也会在worker里变成模型输入。所谓“执行器的批”，更准确地说，是调度核心保存的本次工作记录；执行器负责派发和收集结果，没有独立再挑一组请求。</p>
+<p>调度器按请求ID决定本轮各算多少token，还会附上KV操作和状态信息。执行器把这份安排交给worker。worker根据本轮要算的token准备模型输入，前后两段分别完成自己负责的层。</p>
+<div class="toolbar"><label for="batchKind">看哪种安排</label><select id="batchKind"><option value="compute">正在计算的请求，这一轮算1个token</option><option value="control">更早触发缓存恢复的控制安排（示意）</option><option value="resumed">缓存命中的请求，恢复后算剩余1个token</option></select></div>
+<div class="mapping"><div class="origin"><h3>调度器给出的安排</h3><ul id="planList"></ul></div><div class="record"><h3>核心保存的批记录</h3><ul id="recordList"></ul></div><div class="tensor"><h3>worker准备的模型输入</h3><ul id="tensorList"></ul></div></div>
+<p id="mappingNote" class="note"></p>
+<div class="tablewrap"><table><thead><tr><th>你看到的“批”</th><th>实际在说什么</th><th>与另外两者的关系</th></tr></thead><tbody>
+<tr><td>一次调度安排</td><td>本次处理哪些请求、多少token和哪些控制操作</td><td>决定本次工作的内容</td></tr>
+<tr><td>尚未收尾的批记录</td><td>核心记住这份安排，以及以后取得结果的凭证</td><td>跟踪这次安排是否已经处理完，不产生新请求集合</td></tr>
+<tr><td>模型batch</td><td>本轮有效token组织成的模型输入；可能包括补齐</td><td>worker按安排执行，PP前后段共同完成这一轮工作</td></tr>
+<tr><td>execute／sample命令</td><td>执行器发给worker的方法调用</td><td>一次生成安排可对应先execute、再sample；不能把两条命令算成两组独立请求</td></tr>
+</tbody></table></div>
+<p><b>一批可以包含多条请求，一条请求也可以分很多批。</b> 同时保留几批尚未收尾的工作、每批有几条请求、每批多少token，是不同的数量。MTP和设备执行还可能继续拆成更多内部步骤。</p>
+<details><summary>展开代码里的名字</summary><p>安排表是 <code>SchedulerOutput</code>，其中包含 <code>num_scheduled_tokens</code> 和 <code>kv_connector_metadata</code>。核心的 <code>batch_queue</code> 每项保存最终结果凭证、本次安排、execute结果凭证。执行器另有按命令读取回复的 <code>futures_queue</code>，两种队列职责不同。</p><pre><span class="comment"># core.py原有代码摘录，省略其他分支。
+# future是本轮最后要等的结果凭证，生成路径通常指采样结果。</span>
+<span class="name">batch_queue.appendleft</span>((future, scheduler_output, exec_future))
+<span class="comment"># 核心取出最早提交的一项，再等完整结果。</span>
+future, scheduler_output, exec_model_fut = batch_queue.pop()
+model_output = future.result()
+self.scheduler.update_from_output(scheduler_output, model_output)</pre><p>“凭证”（Future）表示以后可以取得结果，不能只凭它已经被创建就说计算结束。模型batch也不能与每个算子、每次MTP前向逐一画等号。</p></details>
+</section>
+
+<section id="flows"><div class="chapter">固定两条请求，不换名字</div><h2>② 一边看数据怎么走，一边看调度消息怎么回</h2>
+<div class="identity"><div><b>正在计算的请求</b><br>已在当前模型batch里。本次历史例子计算1个token，它不一定是缓存未命中。</div><div class="message"><b>缓存命中的请求</b><br>历史KV在后台恢复。还没被安排它自己的剩余token计算。</div></div>
+<p>这次有完整身份记录的历史模型batch，<b>计算成员只有“正在计算的请求”</b>。它返回时带上的KV完成消息，却属于“缓存命中的请求”。两者通过返回记录联系起来，完成消息并不要求所属请求也在当前模型batch里计算。</p>
+<div class="steps" role="group" aria-label="选择一次执行的步骤"><button data-step="0" aria-pressed="true">① 下发安排</button><button data-step="1" aria-pressed="false">② 数据并行推进</button><button data-step="2" aria-pressed="false">③ 前段返回完成消息</button><button data-step="3" aria-pressed="false">④ 消息被结果挡住</button><button data-step="4" aria-pressed="false">⑤ 核心处理消息</button><button data-step="5" aria-pressed="false">⑥ 安排命中请求</button></div>
+<div id="stepTitle" class="step-title"></div><p id="stepCopy" class="step-copy"></p>
+<div class="toolbar"><span class="small">图里显示</span><button data-view="all" aria-pressed="true">全部通路</button><button data-view="control" aria-pressed="false">调度与状态消息</button><button data-view="data" aria-pressed="false">模型与KV数据</button><span style="flex:1"></span><div class="stepnav"><button id="prev">上一步</button><span id="stepCount" class="step-counter"></span><button id="next">下一步</button></div></div>
+<div class="legend"><span class="control">调度安排</span><span class="hidden">PP中间计算结果</span><span class="kv">历史KV数据</span><span class="mark">KV完成消息</span><span class="result">本批模型／采样结果</span></div>
+<p class="mobilehint">小屏可左右滑动图。箭头始终标明交接的内容，线交叉处没有圆点就不表示交接。</p>
+<div class="diagramwrap"><svg id="flowDiagram" viewBox="0 0 1100 630" role="img" aria-labelledby="diagramTitle diagramDesc"><title id="diagramTitle">调度、模型数据与KV完成消息分步图</title><desc id="diagramDesc">上方为调度核心、执行器、前段worker与后段worker，下方为LMCache。不同颜色分别表示安排、KV、中间数据、完成消息与模型结果。</desc></svg></div>
+<div id="stepNote" class="note"></div>
+<div class="two-lines"><p><b>中间数据</b>　前段worker → 后段worker，属于正在计算的请求。</p><p><b>KV完成消息</b>　前段worker → 执行器 → 调度核心，可能属于另一条缓存命中的请求。</p><p>前段把中间结果直接交给后段，不必先回调度器，再由调度器安排后37层。调度安排传的是计划、位置和块号等信息，不是把整份KV从核心转发一遍。</p></div>
+<h3>当前实现，在哪几个地方可能把消息留住</h3>
+<div class="gatebox"><div class="gate" id="gate0"><b>先收这次命令的worker回复</b><p>前段方法返回、回复可读取、执行器实际读到，是不同的时刻。输出线程还可能等设备事件。</p><small>命令所需回复收齐以后才进入该次合并</small></div><div class="gate" id="gate1"><b>按当前规则合并KV完成信息</b><p>指定模型输出还没形成时，原合并逻辑可能暂不处理前段带回的KV集合。</p><small>后段的一些状态留到采样结果通路</small></div><div class="gate" id="gate2"><b>核心按顺序处理批的最终结果</b><p>较早批的最终结果没处理完，核心可能仍在等它，还没更新命中请求的恢复状态。</p><small>更新状态以后才有机会继续调度</small></div></div>
+<p class="small">这三项解释的是不同位置的处理条件，不是三段可以直接相加的耗时。它们可能嵌套或相互重叠。</p>
+</section>
+
+<section id="wait"><div class="chapter">“恢复好了还在等”，必须说清起点和终点</div><h2>③ 我们说的等待，究竟是哪一段？</h2>
+<div class="waitflow"><div><b>恢复历史KV</b>排队、准备、提交和设备搬运</div><div><b>worker检查完成</b>有些设备已经完成，worker稍后才检查到</div><div class="notification"><b>核心处理完成消息</b>状态消息可能被另一批最终结果挡住</div><div><b>安排剩余计算</b>还需执行位置、资源与输入准备</div><div class="model"><b>前段 → 后段</b>前段工作，后段等本批中间结果再继续</div></div>
+<div class="quote">我们重点讨论的那类等待是<br><b>worker已经知道某请求的KV好了，但调度核心还没处理这些完成消息。</b><br>它发生在状态消息的交付和消费上，不能全部算成KV搬运，也不能把后续正常模型计算都装进来。</div>
+<h3>用10/25一条成功请求，把通知等待和PP依赖分开</h3>
+<p>下面取同一请求的真实时间，把所有16个worker都首次观察到恢复完成设为0。请求还剩1661个输入token，并非全命中只剩1个token。</p>
+<div class="tablewrap"><table><thead><tr><th>相对时间</th><th>已经发生什么</th><th>这一段该怎样理解</th></tr></thead><tbody>
+<tr><td>0.000ms</td><td>所需16个worker都已首次观察到KV恢复完成</td><td>各片完成已被worker看见；不是精确物理完成时刻</td></tr>
+<tr><td>1.952ms</td><td>调度核心处理这条请求的完成消息</td><td>这条请求的通知等待很短</td></tr>
+<tr><td>17.672ms</td><td>前段worker进入该请求的模型方法</td><td>消息处理之后，还有安排和输入准备</td></tr>
+<tr><td>237.015ms</td><td>后段worker进入同一批的模型方法</td><td>前段已在工作；后段继续依赖本批中间结果</td></tr>
+</tbody></table></div>
+<p>这条请求里，不能把后段到237ms才进入模型，解释成“核心一直没处理KV通知”。核心在约2ms时已经处理，前段在约18ms时已经开始走模型。</p>
+<div class="grid2"><div class="card"><span class="tag fact">10/25实际READ的344条请求</span><h3>多数请求，通知等待较短</h3><div class="measure">中位 2.125 ms</div><p>全部16个worker首次可见完成 → 核心处理完成消息，P95为2.634ms。不能说普通请求都固定多等200ms。</p></div><div class="card"><span class="tag fact">同一轮的三条长尾</span><h3>另一批结果确实能把它拖长</h3><div class="measure">约 321 / 672 / 658 ms</div><p>三条都通过结果凭证、排队记录和命令身份连到另一请求的模型输出；这类场景仍然存在。</p></div></div>
+<p><b>“场景存在”和“每条都有同样长的等待”要分开。</b> 以上也没有量出PP2相对PP1净增加多少；提前处理消息最终能让设备早算多少，仍需要验证。</p>
+<details><summary>展开之前218ms那条记录，它和上面有什么不同</summary><p>10/23那条历史例子从<strong>单个前段worker</strong>确认设备恢复事件就绪起算。+1.269ms报告KV完成，+2.614ms前段方法返回；另一请求的后段模型到+177.047ms、MTP到+205.535ms、输出事件等待到+210.981ms。核心到+213.509ms才计数这个前段报告，+214.155ms聚齐所需报告，+216.943ms恢复为可安排状态，+218.530ms提交命中请求自己的计算。</p><p>0点不是全部KV同时完成；终点是提交安排，也不是设备已开始。这条记录能说明状态交付被另一批拖住，不能把218ms全部叫纯通知浪费或PP2相比PP1新增。</p><p><a href="../../05_当前环境与实验准备/20261023_夜间验证/分析/PP2_通知链/pp2-on/本轮结论.md">查看历史两请求身份与原始行号</a></p></details>
+</section>
+
+<section id="slots"><div class="chapter">提前知道KV好了，还需要一处真正能执行的位置</div><h2>④ 为什么提前处理消息，不等于立刻开始计算</h2>
+<p>当前归档配置允许核心保留两批尚未收尾的工作。这里的“两批”包含可能的零token控制安排；它不表示只允许两条请求，也不等于两张卡。</p>
+<div class="slot-row"><div class="slot"><b>位置1 · 已提交的模型工作</b><p>正在计算的请求还没交回完整结果，核心继续保留它的进度和结果归属。</p></div><div class="slot wait"><b>位置2 · 已提交的控制工作</b><p>虽然本轮不算token，仍可能启动KV读取、检查完成和错误，因此也不能随意删除。</p></div></div>
+<p class="small">这两个位置是解释容量的示意，不把某个身份不完整的控制批强行配到那条历史日志。</p>
+<p>如果两个位置都被合法工作占着，缓存命中的请求即使已经恢复，也要先等出空位。还要确认KV块、worker输入和其他设备依赖允许执行。</p>
+<div class="answer"><p><b>提前处理KV消息，只更新“这条请求的数据准备好了”。</b> 原模型批仍继续计算、采样和按顺序完成；它的KV块和工作记录不能因此提前释放。</p><p>我们希望的是，让通知不再无故依附另一批的最终结果；然后在位置和资源允许时，通过正常调度入口安排命中请求。</p></div>
+<h3>怎样才算真的优化成功</h3><div class="tablewrap"><table><thead><tr><th>需要看到</th><th>能证明什么</th></tr></thead><tbody><tr><td>真实KV完成消息更早被核心处理</td><td>通知路径确实提前</td></tr><tr><td>同请求自己的新计算安排更早下发</td><td>提前知道转化成提前调度；未被两个位置继续挡住</td></tr><tr><td>设备真正更早执行，输出保持正确</td><td>worker、PP和设备依赖允许它获得实际收益</td></tr><tr><td>同计算形态、同用例下TTFT改善</td><td>前面改动转化为用户看到的收益；还要观察TPOT与吞吐代价</td></tr></tbody></table></div>
+<p>如果只把消息字段提前，没有改变实际计算时间，就不能报告成加速。跳过真实KV就绪检查、丢弃控制指令或提前宣布模型批完成，都不能作为这项优化。</p>
+</section>
+
+<section id="proof"><div class="chapter">需要核对时再看，不用先读完源码才能理解图</div><h2>⑤ 图里的判断分别来自哪里</h2>
+<details><summary>展开源码位置</summary><ul class="source-list">
+<li><a href="../../ks_notify_branch_20261022/capacity_followup/sources/vllm/v1/core/sched/output.py">output.py</a>约181、193、233行，调度安排包含token计划及KV元数据。</li>
+<li><a href="../../ks_notify_branch_20261022/source_baseline/vllm/v1/engine/core.py">core.py</a>约194至200、520至547、563至585行，批记录属于核心，随后按批等最终结果并更新调度器。</li>
+<li><a href="../../ks_notify_branch_20261022/source_baseline/vllm/v1/executor/multiproc_executor.py">multiproc_executor.py</a>约75至103、313至324、368至412行，执行器派发命令、顺序取得回复、收齐后合并。</li>
+<li><a href="../../ks_notify_branch_20261022/baseline_worker_observers/vllm/v1/worker/kv_connector_model_runner_mixin.py">Connector生命周期代码</a>约94至110行，明确说明后台KV涉及的请求可能与运行请求不同，并通过模型执行通路收集get_finished。</li>
+<li><a href="../../ks_notify_branch_20261022/capacity_followup/sources/m8/vllm_ascend/worker/worker.py">Ascend worker.py</a>约628至646、665至680行，PP中间结果直接发送，KV完成消息另装进返回记录。</li>
+<li><a href="../../ks_notify_branch_20261022/source_baseline/vllm/distributed/kv_transfer/kv_connector/utils.py">KV聚合器</a>约69至70行，指定输出为空时原逻辑暂不继续合并KV集合。</li>
+<li><a href="../../ks_notify_branch_20261022/capacity_followup/sources/m8/vllm_ascend/worker/model_runner_v1.py">Ascend runner</a>约2395至2444行，后段保存执行状态与KV信息，再在采样路径取用；MTP还有后续内部工作。</li>
+</ul><p>这些是本项目已归档安装版本与观测适配，不是重新查询当前官方最新版本。本页没有启用候选分支或运行源码修改。</p></details>
+<details><summary>展开实测与修改边界</summary><ul class="source-list">
+<li><a href="../../05_当前环境与实验准备/20261025_性能指标补采/分析/继续定位_通知后如何进入计算/原理串联_通知之后与计算批.md">10/25同请求的通知、前段和后段时间</a>，含95f48735…请求的完整同身份示例。</li>
+<li><a href="../../05_当前环境与实验准备/20261025_性能指标补采/KV动作聚合/on-async/通知长尾关联.md">10/25三条通知长尾</a>，用同一结果凭证串起队列、execute和sample，没有按相近时间猜身份。</li>
+<li><a href="../../05_当前环境与实验准备/20261023_夜间验证/分析/PP2_通知链/pp2-on/本轮结论.md">10/23两条请求的历史时序</a>，模型batch只有正在计算的请求，却携带另一请求完成消息。</li>
+<li><a href="../../ks_notify_branch_20261022/capacity_followup/执行名额与提前计算_源码依据及最小方案.md">两个位置被占满时的源码与方案</a>，明确哪些只有CPU局部检查，哪些未实现或上卡验证。</li>
+<li><a href="../../05_当前环境与实验准备/20261023_夜间验证/报告/PP与LMCache_性能问题原理说明.html">完整易读原理说明</a>，把缓存恢复、剩余模型计算和性能收益接起来。</li>
+</ul><p>worker方法返回、输出可读取、设备事件真实完成、执行器取得结果与核心更新状态，分别记录。设备就绪的判断以对应完成契约为准；本页不把“方法返回”统一说成设备完成，也不把长设备事件全部叫数据搬运。</p><p>主线仍是PP＝2接入LMCache的收益与代价。PP1也有按批处理和等待结果；现有证据没有把这些等待量成纯PP2增量。<code>KS-MEM-001</code>保持OPEN。</p></details>
+</section>
+<footer class="foot">图中的普通步骤表示逻辑关系，不按真实耗时比例绘制。实测数字单独注明来源。本HTML离线可用，没有外部脚本、服务依赖或客户原文。</footer>
+<noscript>正文和实测表可直接阅读。分步图需要浏览器启用JavaScript。</noscript>
+</main>
+<script>
+'use strict';
+const layouts={
+ compute:{plan:['模型成员：正在计算的请求','本次安排1个有效token','可附带后台KV操作元数据；完成消息从worker返回'],record:['属于调度核心，不是执行器重组请求','保存这份安排','保存execute与最终结果的凭证'],tensor:['有效token来自正在计算的请求','前41层和后37层完成同一轮模型工作','缓存命中请求不因此成为模型成员'],note:'对应历史command 3402的模型成员与token数。这里只说有效token；实际张量还可能补齐，MTP和算子执行也会继续拆分。'},
+ control:{plan:['模型计算token为0','可以有真实的KV读取或状态操作','这里用缓存命中请求的恢复举例'],record:['仍要跟踪命令是否执行和结果归属','此路径通常等待execute结果','token为0也可能占一项未收尾记录'],tensor:['本轮没有正token模型forward','仍可调用Connector启动读取、检查完成或错误','设备可能在搬KV，并非完全没有工作'],note:'这是控制安排的功能示意，不补造那条历史长尾里缺失的控制命令编号，也不保证零token安排只有轮询。'},
+ resumed:{plan:['这是一份新的计算安排','模型成员换成缓存命中的请求','完整命中示意中仍安排最后1个输入token'],record:['新安排有自己的结果归属','不把前一批尚未完成的结果提前抹掉','有空位和资源时才允许下发'],tensor:['使用已恢复历史KV','最后一个输入token仍经过前41层与后37层','KV完成消息本身不是hidden state或token结果'],note:'同一请求跨越恢复与后续计算，前后是不同的安排。这里说明完整命中的旧场景；10/25客户正式请求没有只剩1 token的案例。'}
+};
+const steps=[
+ {title:'① 核心调用调度器，下发本次模型安排',copy:'当前模型batch计算“正在计算的请求”。执行器把同一份安排发给前后段worker；核心保留这一轮尚未收尾的记录。',status:[['已提交计算安排','等待本轮结果'],['派发同一份安排','不重新选择请求'],['获得本段工作安排','准备前41层'],['获得同一安排','等待本批前段输入']],active:['schedule0','schedule1','broadcast'],note:'核心保存的是本轮工作与结果凭证。图中只有一份调度安排，派发给多个worker不会变成多个独立请求batch。',gate:[],member:'正在计算的请求',kv:'缓存命中的请求：恢复由更早的安排触发'},
+ {title:'② 模型中间结果和历史KV，各走各的通路',copy:'前段把“正在计算的请求”的中间结果直接交给后段。与此同时，LMCache恢复“缓存命中的请求”的历史KV，各段接收自己需要的层。',status:[['仍等待本批最终结果','尚未更新另一请求'],['本轮执行仍在进行','没有转发整份KV'],['算当前模型请求','也可检查后台恢复'],['接前段中间结果','继续后37层']],active:['hidden','kvFront','kvBack'],note:'图中同时显示的是可以重叠的工作，不表示每个时刻速度相同。历史KV与模型hidden state是不同数据，都不需要先回调度核心再转到后段。',gate:[],member:'正在计算的请求',kv:'缓存命中的请求：各段恢复各自历史KV'},
+ {title:'③ 前段已返回，里面带着另一条请求的完成消息',copy:'前段确认“缓存命中的请求”在本地恢复完成，产出带这条消息的返回记录。前段给后段的数据属于正在计算的请求；这里带回的KV消息属于另一条请求。',status:[['还没处理KV完成消息','命中请求继续等'],['沿输出通路收集回复','本批最终结果未到'],['报告本地KV完成','当前方法已返回'],['继续当前模型工作','输出阶段尚未结束']],active:['kvMark','final'],note:'本步只确认前段本地恢复就绪，不能代替全体就绪。箭头表示返回通路，方法返回不等于执行器已经在同一时刻读到回复，也不等于该worker所有设备任务都结束。',gate:[0],member:'正在计算的请求',kv:'缓存命中的请求：前段已产出完成消息'},
+ {title:'④ 完成消息可用，但承载它的模型批还未收尾',copy:'承载消息的当前模型批正在算另一条请求。即使前段完成消息已经可交付，执行器仍需收齐、合并回复，核心还按批处理最终结果。后段模型、采样或输出事件未完成时，缓存命中请求的状态可能还没更新。',status:[['仍等本批最终结果','未推进命中请求'],['完成消息沿结果通路','还在等后段结果'],['本地KV完成已报告','不依赖另一请求产token'],['仍需交出最终结果','可能等设备输出事件']],active:['kvMark','final'],note:'这里解释已出现的状态交付耦合。后台KV不需要等另一请求产出token才有效；但消息处理会受当前结果通路约束，影响范围因请求而异。',gate:[0,1,2],member:'正在计算的请求',kv:'缓存命中的请求：消息尚未推动核心更新'},
+ {title:'⑤ 本批结果可处理，核心按请求ID更新KV状态',copy:'本批最终结果沿原路线返回。核心处理完成信息，确认缓存命中请求所需的worker都报告完成后，才把它恢复成有机会安排的状态。',status:[['处理各worker完成信息','按请求ID更新状态'],['收齐并交付本批结果','合并已成立KV状态'],['本地报告进入状态更新','本批职责按原路线收尾'],['交出模型／采样结果','及相应本地状态']],active:['final','coreMark'],note:'图中显示最终结果与KV完成信息进入同一处理通路。提前处理真实KV状态可以研究，但不能因此提前宣布原模型批全部完成。',gate:[],member:'正在计算的请求',kv:'缓存命中的请求：所需报告齐后具备安排资格'},
+ {title:'⑥ 有空位和资源后，命中请求才获得自己的模型batch',copy:'下一轮安排的模型成员换成“缓存命中的请求”。即使完整命中，它仍需计算剩余输入token，前段算完再把本批中间结果交给后段。',status:[['条件满足才调度','下发新的计算安排'],['执行新一轮安排','保留各批结果顺序'],['计算命中请求剩余token','仍走前41层'],['接本批前段中间结果','继续后37层']],active:['schedule0','schedule1','broadcast','hidden'],note:'本步展示后续动作顺序，不表示前后段同时开始。若两项未收尾记录都占着位置，或资源未满足，还不能进入这一步。',gate:[],member:'缓存命中的请求',kv:'历史KV已恢复，不需要因这一步重新搬一遍'}
+];
+let stepIndex=0,view='all';
+const el=id=>document.getElementById(id);
+function setList(id,items){el(id).replaceChildren(...items.map(x=>{const li=document.createElement('li');li.textContent=x;return li;}));}
+function drawMapping(){const m=layouts[el('batchKind').value];setList('planList',m.plan);setList('recordList',m.record);setList('tensorList',m.tensor);el('mappingNote').textContent=m.note;}
+const colors={control:'#8054ba',hidden:'#2678bc',kv:'#218767',mark:'#b87519',result:'#5e6b80'};
+function T(x,y,s,attrs=''){return `<text x="${x}" y="${y}" ${attrs}>${s}</text>`;}
+function label(x,y,lines,color,width=240){const h=lines.length*20+10;return `<rect x="${x-width/2}" y="${y-17}" width="${width}" height="${h}" rx="4" fill="#fcfdff" opacity=".96"/>`+lines.map((s,i)=>T(x,y+i*20,s,`text-anchor="middle" class="edge-label" style="fill:${color}"`)).join('');}
+function box(x,y,w,title,lines,fill='#f0f5fc',stroke='#c9d9eb',height=130){return `<rect x="${x}" y="${y}" width="${w}" height="${height}" rx="7" fill="${fill}" stroke="${stroke}"/>`+T(x+14,y+28,title,'class="role-title"')+lines.map((s,i)=>T(x+14,y+59+i*22,s,'class="subtext"')).join('');}
+const edgeDefs=[
+ {id:'schedule0',kind:'control',d:'M240 112 H285',at:[260,97],lines:[]},
+ {id:'schedule1',kind:'control',d:'M495 112 H530',at:[512,97],lines:[]},
+ {id:'broadcast',kind:'control',d:'M390 70 V27 H930 V70',at:[656,18],lines:['同一安排也发给后段'],w:230},
+ {id:'hidden',kind:'hidden',d:'M710 200 V238 H870 V200',at:[790,260],lines:['本批中间计算结果'],w:230},
+ {id:'kvFront',kind:'kv',d:'M760 542 H690 V200',at:[577,462],lines:['缓存命中的请求','前41层历史KV'],w:220},
+ {id:'kvBack',kind:'kv',d:'M930 485 V200',at:[1000,428],lines:['缓存命中的请求','后37层历史KV'],w:180},
+ {id:'kvMark',kind:'mark',d:'M580 200 V320 H340 V200',at:[459,346],lines:['缓存命中请求的KV完成消息','本地完成，不是中间数据'],w:294},
+ {id:'final',kind:'result',d:'M1010 200 V410 H435 V200',at:[725,396],lines:['本批模型／采样结果'],w:245},
+ {id:'coreMark',kind:'mark',d:'M390 200 V458 H135 V200',at:[264,482],lines:['完成消息按请求ID','更新到调度状态'],w:225}
+];
+function allowed(kind){return view==='all'||kind==='result'||(view==='data'?['hidden','kv'].includes(kind):['control','mark'].includes(kind));}
+function draw(){
+ const s=steps[stepIndex];el('stepTitle').textContent=s.title;el('stepCopy').textContent=s.copy;el('stepNote').textContent=s.note;el('stepCount').textContent=`${stepIndex+1} / ${steps.length}`;
+ el('prev').disabled=stepIndex===0;el('next').disabled=stepIndex===steps.length-1;
+ document.querySelectorAll('[data-step]').forEach(b=>b.setAttribute('aria-pressed',String(Number(b.dataset.step)===stepIndex)));
+ document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.view===view)));
+ for(let i=0;i<3;i++)el('gate'+i).classList.toggle('active',s.gate.includes(i));
+ let svg='<title id="diagramTitle">'+s.title+'</title><desc id="diagramDesc">'+s.copy+'</desc><defs>';
+ for(const [k,c] of Object.entries(colors))svg+=`<marker id="arrow-${k}" markerWidth="9" markerHeight="9" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="${c}"/></marker>`;
+ svg+='</defs>';
+ for(const e of edgeDefs){if(!s.active.includes(e.id)||!allowed(e.kind))continue;const pending=e.id==='final'&&stepIndex<4,c=colors[e.kind];const dash=e.kind==='control'?'7 5':e.kind==='mark'?'3 5':pending?'8 5':'';svg+=`<g class="edge" data-edge="${e.id}" data-kind="${e.kind}"><path d="${e.d}" stroke="${c}" stroke-width="3" fill="none" ${dash?`stroke-dasharray="${dash}"`:''} ${pending?'':`marker-end="url(#arrow-${e.kind})"`}/>`;if(e.lines.length)svg+=label(e.at[0],e.at[1],pending?['后段最终结果尚未可交付','执行器／核心仍等这条通路']:e.lines,c,pending?300:e.w);svg+='</g>';}
+ const xs=[30,285,530,810],ws=[210,210,240,240],roles=['调度核心＋调度器','执行器','前段worker · 前41层','后段worker · 后37层'];
+ roles.forEach((r,i)=>{const waiting=(stepIndex===2||stepIndex===3)&&(i===0||i===1);svg+=box(xs[i],70,ws[i],r,s.status[i],waiting?'#fff4df':'#f0f5fc',waiting?'#dfba79':'#c9d9eb');});
+ svg+=box(760,485,270,'LMCache',['保存／恢复历史KV','恢复请求与当前计算请求可不同'],'#ecf7f1','#b7d8c8',100);
+ svg+=box(30,525,650,'这一次模型batch的计算成员',[s.member,s.kv],'#f6f8fc','#d6e0ed',91);
+ if(stepIndex===2||stepIndex===3)svg+=label(165,286,['缓存命中请求的状态','尚未被核心推进'],colors.mark,234);
+ el('flowDiagram').innerHTML=svg;el('flowDiagram').dataset.step=String(stepIndex);el('flowDiagram').dataset.view=view;
+}
+el('batchKind').addEventListener('change',drawMapping);
+document.querySelectorAll('[data-step]').forEach(b=>b.addEventListener('click',()=>{stepIndex=Number(b.dataset.step);draw();}));
+document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{view=b.dataset.view;draw();}));
+el('prev').addEventListener('click',()=>{if(stepIndex>0){stepIndex--;draw();}});el('next').addEventListener('click',()=>{if(stepIndex<steps.length-1){stepIndex++;draw();}});
+
+// 时间点来自同一条历史请求；条形表示观测窗口或状态，不拆成纯CPU/设备耗时。
+const moments=[
+ {t:0,title:'0ms，前段一个worker已经检查到本地KV就绪',copy:'缓存命中的请求在前段这一片已恢复好。正在计算的请求尚未完成后段及输出路径。其他worker是否也恢复好，需要各自的完成记录；不能用这一个时刻替代全部分片完成。'},
+ {t:1.269,title:'1.269ms，前段报告缓存命中请求的本地恢复完成',copy:'完成消息已经产生，并装进当前模型命令的返回记录。当前模型命令计算的是另一条正在计算的请求。消息产生、输出队列可读、执行器实际读取仍是不同时间。'},
+ {t:2.614,title:'2.614ms，前段worker的方法已经返回',copy:'前段给后段的中间结果属于正在计算的请求；返回记录里的KV完成消息属于缓存命中的请求。后段尚未交出本批完整结果。灰色区域没有展开前段后来的其他活动，不能当作前段CPU闲着。'},
+ {t:177.047,title:'177.047ms，所有后段worker的模型方法最晚已返回',copy:'正在计算的请求还要经过采样、MTP及输出准备等路径。模型方法返回不能统一当成设备全部结束，也不能把0到177ms全叫纯模型算子耗时。'},
+ {t:205.535,title:'205.535ms，后段rank8的MTP方法返回',copy:'这里只记录这一个后段worker的多token草拟方法返回。不能把177.047到205.535ms直接称作独占MTP计算时长，相关工作可能重叠。核心还没有计数那份前段KV报告。'},
+ {t:210.981,title:'210.981ms，后段rank8的输出事件等待结束',copy:'当前记录中这条输出路径已越过自己的设备事件等待。它不代表所有worker在同一时刻全部结束；各回复还要沿原结果通路被收取和处理。'},
+ {t:213.509,title:'213.509ms，核心终于计数这份前段KV完成报告',copy:'前段约1.269ms已报告，核心到现在才处理这份报告。消息产生到被计数的窗口约212.240ms；内部还没有分完输出排队、收集、合并和核心消费各占多少，不能全部叫执行器CPU空等。'},
+ {t:214.155,title:'214.155ms，核心聚齐本请求所需的完成报告',copy:'这说明核心已经收集齐需要的报告，并不表示所有设备恰好在214.155ms才恢复完。真实物理就绪、worker检查到就绪和核心收齐报告，是不同的时刻。'},
+ {t:216.943,title:'216.943ms，调度器把命中请求恢复为可以安排的状态',copy:'完成信息已进入请求状态。接下来是否能下发，还要看执行位置、KV资源和其他依赖。具备安排资格与设备已经开算仍不是同一件事。'},
+ {t:218.530,title:'218.530ms，提交命中请求自己的剩余计算',copy:'这条请求接下来仍要走前41层、后37层。本时刻是提交安排，没有把它当成设备真正开算或客户端收到首个token。时间轴在这个观测边界收住。'}
+];
+const timelineRanges={full:[0,220],early:[0,5],late:[170,220]};
+let momentIndex=0;
+function drawTimeline(){
+ const [lo,hi]=timelineRanges[el('timelineZoom').value],left=255,width=800,X=t=>left+(t-lo)/(hi-lo)*width;
+ const rows=[122,211,300,389,478],m=moments[momentIndex];
+ el('momentTitle').textContent=m.title;el('momentCopy').textContent=m.copy;
+ document.querySelectorAll('button[data-moment]').forEach(b=>b.setAttribute('aria-pressed',String(Number(b.dataset.moment)===momentIndex)));
+ let svg='<title id="timelineTitle">真实两请求并行时间线</title><desc id="timelineDesc">相同横向位置对应同一时刻。蓝色为后段尚未收尾窗口，橙色为完成消息或请求状态等待更新；不是各线程CPU占用图。</desc>';
+ svg+='<defs><pattern id="unobserved" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(35)"><rect width="8" height="8" fill="#f3f5f8"/><line x1="0" y1="0" x2="0" y2="8" stroke="#dbe2eb" stroke-width="2"/></pattern></defs>';
+ svg+=T(left,23,'同一横向位置，表示同一时刻','class="time-axis"');
+ svg+=T(1055,23,`${lo} 至 ${hi} ms`,'text-anchor="end" class="time-axis"');
+ const ticks=el('timelineZoom').value==='full'?[0,50,100,150,200,220]:el('timelineZoom').value==='early'?[0,1,2,3,4,5]:[170,180,190,200,210,220];
+ ticks.forEach(t=>{const x=X(t);svg+=`<line x1="${x}" y1="75" x2="${x}" y2="528" stroke="#e1e8f1"/>`+T(x,60,String(t),'text-anchor="middle" class="time-axis"');});
+ const titles=[['前段worker','本地KV报告与方法返回'],['后段worker','正在计算的请求'],['执行器的结果通路','跟踪消息，不是CPU占用'],['调度核心中的状态','只看缓存命中的请求'],['缓存命中的请求','自己的计算是否已提交']];
+ rows.forEach((y,i)=>{svg+=T(15,y-7,titles[i][0],'class="lane-title"')+T(15,y+16,titles[i][1],'class="lane-sub"')+`<rect x="${left}" y="${y-16}" width="${width}" height="32" rx="4" fill="#f5f7fa"/>`+`<line x1="12" y1="${y+43}" x2="1080" y2="${y+43}" stroke="#edf1f6"/>`;});
+ function segment(row,start,end,fill,labelText,knownStart=true){const a=Math.max(start,lo),b=Math.min(end,hi);if(b<=a)return;const x=X(a),w=X(b)-x,y=rows[row]-16;svg+=`<rect class="timeline-span" data-lane="${row}" x="${x}" y="${y}" width="${w}" height="32" rx="4" fill="${fill}"/>`;if(!knownStart&&lo===0)svg+=`<path d="M${x+13} ${y+3} l-8 13 l8 13" fill="none" stroke="#4c83b8" stroke-width="2"/>`;if(labelText&&w>labelText.length*13+28)svg+=T(x+w/2,rows[row]+5,labelText,'text-anchor="middle" class="track-label"');}
+ segment(0,0,2.614,'#8fc9ae','报告完成 → 方法返回');
+ segment(0,2.614,220,'url(#unobserved)','方法返回以后的活动，本例未展开');
+ segment(1,0,210.981,'#8cb8e6','本批后段／输出路径尚未收尾',false);
+ segment(2,1.269,213.509,'#edc17c','完成消息已产生，尚未被核心计数');
+ segment(2,213.509,220,'#8fc9ae','核心已计数');
+ segment(3,0,213.509,'#f2d6a8','命中请求的这份报告，尚未在核心处理');
+ segment(3,213.509,218.530,'#8fc9ae','计数 → 聚齐 → 可安排');
+ segment(4,0,218.530,'#f2d6a8','缓存命中请求：自己的剩余计算尚未提交');
+ const markerRows=[[0],[0,2],[0],[1],[1],[1],[2,3],[3],[3],[3,4]];
+ moments.forEach((point,index)=>{if(point.t<lo||point.t>hi)return;markerRows[index].forEach(row=>{const x=X(point.t),y=rows[row],chosen=index===momentIndex;svg+=`<g class="timeline-marker" data-timeline-point="${index}" role="button" tabindex="0" aria-label="${point.title}"><title>${point.title}</title><circle cx="${x}" cy="${y}" r="${chosen?6:4}" fill="${chosen?'#9b493f':'#315f8e'}" stroke="white" stroke-width="1.5"/></g>`;});});
+ if(m.t>=lo&&m.t<=hi){const x=X(m.t);svg+=`<line x1="${x}" y1="76" x2="${x}" y2="531" stroke="#9b493f" stroke-width="1.5" stroke-dasharray="4 5"/>`+T(Math.max(left+80,Math.min(x,975)),557,`选中 ${m.t.toFixed(3)} ms`,'text-anchor="middle" class="time-axis" style="fill:#9b493f"');}
+ else svg+=T(left,557,'选中的时刻不在当前范围；可切回完整窗口。','class="time-axis"');
+ svg+=T(left,592,'各行是并行观测，不能把条形长度相加；图外没有补造设备开算时间。','class="time-axis"');
+ el('timelineDiagram').innerHTML=svg;el('timelineDiagram').dataset.moment=String(momentIndex);el('timelineDiagram').dataset.range=el('timelineZoom').value;
+ el('timelineDiagram').querySelectorAll('[data-timeline-point]').forEach(g=>{const choose=()=>{momentIndex=Number(g.dataset.timelinePoint);drawTimeline();};g.addEventListener('click',choose);g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();choose();}});});
+}
+document.querySelectorAll('button[data-moment]').forEach(b=>b.addEventListener('click',()=>{momentIndex=Number(b.dataset.moment);drawTimeline();}));
+el('timelineZoom').addEventListener('change',drawTimeline);
+drawMapping();draw();drawTimeline();document.documentElement.dataset.reportReady='true';
+</script></body></html>
