@@ -1,0 +1,276 @@
+{
+  "date": "2026-10-23",
+  "collection_dates": [
+    "2026-10-19",
+    "2026-10-20",
+    "2026-10-21"
+  ],
+  "accounting": {
+    "label": "PP2 paired, 2026-10-19, P on M12",
+    "n": 2,
+    "tp": 8,
+    "pp": 2,
+    "dsa_cp": true,
+    "off_compute_ms": 447.86987650000003,
+    "on_compute_ms": 369.3091515,
+    "restore_and_progress_ms": 87.7330115,
+    "on_P_window_ms": 457.04216299999996,
+    "off_P_window_ms": 447.86987650000003,
+    "indices": [
+      0,
+      22
+    ],
+    "source": "E:\\work\\ks\\output\\ks_ttft_observe_20261019\\causal_followup\\analysis-pipeline\\p-only-12g-offdiag-paired.json",
+    "source_selector": "summary[tier=tier1,category=full]",
+    "saved_compute_window_ms": 78.56072500000005,
+    "net_P_on_minus_off_ms": 9.172286499999927,
+    "saved_compute_window_pct_of_off": 17.540970965480874,
+    "restore_and_progress_pct_of_off": 19.588951189486842,
+    "net_P_on_minus_off_pct": 2.047980224005962,
+    "remaining_compute_pct_of_off": 82.45902903451913
+  },
+  "ttft": [
+    {
+      "label": "PP2：P在12",
+      "n": 27,
+      "off_success": 30,
+      "on_success": 29,
+      "attempts": 32,
+      "off_ms": 1191.8283700253126,
+      "on_ms": 1111.0150462568358,
+      "relative_percent": -6.78061756213777,
+      "metric_sources": [
+        {
+          "role": "ON",
+          "raw_json": "E:\\work\\ks\\output\\ks_ttft_observe_20261019\\causal_followup\\evidence\\capture-20261019-135642\\m137\\on-diag-12g\\results\\pp2_in4096_out256_c4_n32.json",
+          "client_jsonl": "E:\\work\\ks\\output\\ks_ttft_observe_20261019\\causal_followup\\evidence\\capture-20261019-135642\\m137\\on-diag-12g\\client-tier2.jsonl",
+          "keys": [
+            "ttfts[i]"
+          ]
+        },
+        {
+          "role": "OFF",
+          "raw_json": "E:\\work\\ks\\output\\ks_ttft_observe_20261019\\causal_followup\\evidence\\capture-20261019-141705\\m137\\off-diag\\results\\pp2_in4096_out256_c4_n32.json",
+          "client_jsonl": "E:\\work\\ks\\output\\ks_ttft_observe_20261019\\causal_followup\\evidence\\capture-20261019-141705\\m137\\off-diag\\client-tier2.jsonl",
+          "keys": [
+            "ttfts[i]"
+          ]
+        }
+      ]
+    },
+    {
+      "label": "PP1：P在8",
+      "n": 27,
+      "off_success": 27,
+      "on_success": 32,
+      "attempts": 32,
+      "off_ms": 2096.524698814998,
+      "on_ms": 1193.7372303671307,
+      "relative_percent": -43.06114156242198,
+      "metric_sources": [
+        {
+          "role": "ON",
+          "raw_json": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\pp1-control\\原始资料\\m137-pp1-complete-144531\\pp1-control\\bench\\on\\20261020-141112\\results\\pp1_in4096_out256_c4_n32.json",
+          "client_jsonl": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\pp1-control\\原始资料\\m137-pp1-complete-144531\\pp1-control\\bench\\on\\20261020-141112\\client-tier2.jsonl",
+          "keys": [
+            "ttfts[i]"
+          ]
+        },
+        {
+          "role": "OFF",
+          "raw_json": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\pp1-control\\原始资料\\m137-pp1-complete-144531\\pp1-control\\bench\\off\\20261020-142702\\results\\pp1_in4096_out256_c4_n32.json",
+          "client_jsonl": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\pp1-control\\原始资料\\m137-pp1-complete-144531\\pp1-control\\bench\\off\\20261020-142702\\client-tier2.jsonl",
+          "keys": [
+            "ttfts[i]"
+          ]
+        }
+      ]
+    }
+  ],
+  "timeline_states": [
+    {
+      "label": "KV好了",
+      "time": 350.934326,
+      "worker": "前段worker查到：缓存命中的请求，其设备KV已经就绪。",
+      "executor": "这条完成消息还没有进入核心的完成计数。",
+      "scheduler": "仍然记录为等待外部KV，尚不能据此安排它计算。"
+    },
+    {
+      "label": "worker交出消息",
+      "time": 352.903969,
+      "worker": "前段worker已把这条完成消息放进正在计算的请求所属批次的返回信息，并结束方法。",
+      "executor": "返回信息何时进入可读队列尚未采齐；整批其他worker的回复还在推进。",
+      "scheduler": "仍未处理到这条完成消息。方法返回也不等于前段设备完全空闲。"
+    },
+    {
+      "label": "本次回复收齐",
+      "time": 551.364546,
+      "worker": "前段的KV完成信息已经准备好；后段还没有交付这一批的最终模型输出。",
+      "executor": "本次执行回复已收齐。按原规则，因为负责最终输出的worker此时未交付模型结果，暂不整理前段KV消息。（指定输出为None。）",
+      "scheduler": "核心仍沿模型结果链等待，尚未解除缓存命中请求的KV等待。"
+    },
+    {
+      "label": "核心开始计入",
+      "time": 584.954897,
+      "worker": "前段的同一份完成信息沿后续输出回复被处理；这不是再次恢复KV。",
+      "executor": "在核心进程的结果处理链中，计入前段worker 0的标记；此刻还剩7份确认。",
+      "scheduler": "这一步是完成计数，不是调度器已处理齐所有通知。"
+    },
+    {
+      "label": "16份确认齐全",
+      "time": 585.513901,
+      "worker": "这个请求所需的16份完成确认已经收齐。",
+      "executor": "完成消息整理齐全；本批后续结果的完整等待在约585.560ms结束。",
+      "scheduler": "还需把完成信息交给调度器更新，不应把计数时刻当成设备开算。"
+    },
+    {
+      "label": "调度器更新",
+      "time": 586.550378,
+      "worker": "KV已经就绪，等待后续计算安排。",
+      "executor": "相应完成信息已经交给调度器处理。",
+      "scheduler": "记录缓存命中请求已收到外部KV完成确认，后续调度可检查是否安排剩余token。"
+    },
+    {
+      "label": "下一批提交",
+      "time": 589.075186,
+      "worker": "即将接收包含缓存命中请求的新计算安排；剩余token仍需经过前41层和后37层。",
+      "executor": "核心已提交后续计算批；约589.724ms指令进入派发队列。",
+      "scheduler": "这是提交时间，不是实际设备开始计算的时间。"
+    }
+  ],
+  "same_worker_wait_ms": 234.020661,
+  "query_to_report_ms": 0.632414,
+  "worker_report_to_count_ms": 233.388247,
+  "raw_event_excerpt": [
+    {
+      "说明": "前段worker查到设备KV已就绪",
+      "相对时间_ms": 350.934326,
+      "归档中的原始字段": {
+        "event": "adapter.transfer_query_return",
+        "request_id": "cmpl-1f59ac81-3e43-4f21-9946-639ed1ff3a06-0-b3dca996",
+        "rank": 0,
+        "command_id": 2123,
+        "ready": true,
+        "raw_response_processed": true,
+        "time_monotonic_ns": 4067670790697002,
+        "source_line": 3625
+      }
+    },
+    {
+      "说明": "同一个前段worker报告KV恢复完成",
+      "相对时间_ms": 351.56667,
+      "归档中的原始字段": {
+        "event": "kv.worker_finished_recving",
+        "request_id": "cmpl-1f59ac81-3e43-4f21-9946-639ed1ff3a06-0-b3dca996",
+        "rank": 0,
+        "command_id": 2123,
+        "time_monotonic_ns": 4067670791329416,
+        "source_line": 3632
+      }
+    },
+    {
+      "说明": "这个前段worker交出当前批返回信息",
+      "相对时间_ms": 352.903969,
+      "归档中的原始字段": {
+        "event": "pipeline.worker.end",
+        "request_id": "cmpl-414e7d3c-ae6c-42ab-8e68-66f75cc3c0c8-0-94e2a7b2",
+        "rank": 0,
+        "command_id": 2123,
+        "time_monotonic_ns": 4067670792666625,
+        "source_line": 3639
+      }
+    },
+    {
+      "说明": "本次模型执行的worker回复收齐",
+      "相对时间_ms": 551.364546,
+      "归档中的原始字段": {
+        "event": "core.worker_response_wait.end",
+        "time_monotonic_ns": 4067670991126692,
+        "source_line": 38948
+      }
+    },
+    {
+      "说明": "核心结果处理链计入这个worker的完成消息",
+      "相对时间_ms": 584.954897,
+      "归档中的原始字段": {
+        "event": "kv.aggregate_recving_count",
+        "request_id": "cmpl-1f59ac81-3e43-4f21-9946-639ed1ff3a06-0-b3dca996",
+        "rank": 0,
+        "expected_finished_count": 16,
+        "remaining_finished_count": 7,
+        "time_monotonic_ns": 4067671024717663,
+        "source_line": 38953
+      }
+    },
+    {
+      "说明": "缓存命中请求所需16份确认齐全",
+      "相对时间_ms": 585.513901,
+      "归档中的原始字段": {
+        "event": "kv.aggregate_finished_recving",
+        "request_id": "cmpl-1f59ac81-3e43-4f21-9946-639ed1ff3a06-0-b3dca996",
+        "expected_finished_count": 16,
+        "time_monotonic_ns": 4067671025276657,
+        "source_line": 38983
+      }
+    },
+    {
+      "说明": "本批后续结果的完整等待返回",
+      "相对时间_ms": 585.560481,
+      "归档中的原始字段": {
+        "event": "core.worker_response_wait.end",
+        "time_monotonic_ns": 4067671025323237,
+        "source_line": 38985
+      }
+    },
+    {
+      "说明": "调度器实际收到KV完成信息",
+      "相对时间_ms": 586.550378,
+      "归档中的原始字段": {
+        "event": "kv.scheduler_finished_recving",
+        "request_id": "cmpl-1f59ac81-3e43-4f21-9946-639ed1ff3a06-0-b3dca996",
+        "time_monotonic_ns": 4067671026313124,
+        "source_line": 38997
+      }
+    },
+    {
+      "说明": "核心将缓存命中请求交给执行器",
+      "相对时间_ms": 589.075186,
+      "归档中的原始字段": {
+        "event": "pipeline.executor_submit",
+        "request_id": "cmpl-1f59ac81-3e43-4f21-9946-639ed1ff3a06-0-b3dca996",
+        "time_monotonic_ns": 4067671028837942,
+        "source_line": 39022
+      }
+    },
+    {
+      "说明": "新计算指令进入派发队列",
+      "相对时间_ms": 589.7243,
+      "归档中的原始字段": {
+        "event": "pipeline.command_enqueue",
+        "request_id": "cmpl-1f59ac81-3e43-4f21-9946-639ed1ff3a06-0-b3dca996",
+        "command_id": 2126,
+        "time_monotonic_ns": 4067671029487036,
+        "source_line": 39026
+      }
+    }
+  ],
+  "source_files": [
+    "E:\\work\\ks\\output\\ks_cpu_causality_20261021\\accounting\\paired-P-action-accounting.json",
+    "E:\\work\\ks\\output\\ks_test_results_structured_20261021\\data\\paired-performance-analysis.json",
+    "E:\\work\\ks\\output\\ks_rootcause_window_20261021\\analysis\\continuation_1730\\notification\\c4-ready-query-chain.json",
+    "E:\\work\\ks\\output\\ks_rootcause_window_20261021\\analysis\\continuation_1730\\notification\\c4-worker-output-boundary.json",
+    "E:\\work\\ks\\output\\ks_rootcause_window_20261021\\analysis\\pp2\\c4-critical-path.json",
+    "E:\\work\\ks\\output\\ks_rootcause_window_20261021\\analysis\\pp2\\c4-core-focus-complete.json"
+  ],
+  "limits": [
+    "Different samples: C1 action accounting is not the C4 notification trace.",
+    "Cross-layout TP, CP, date, P host and observation conditions differ.",
+    "Archived structured events retain source lines; not verbatim full original trace.",
+    "Observed notification latency is not a measured removable latency or PP1-relative increment."
+  ],
+  "new_requests_sent": 0,
+  "NPU_used": false,
+  "runtime_source_changed": false,
+  "services_changed": false,
+  "KS_MEM_001": "OPEN"
+}

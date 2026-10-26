@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PP＋LMCache：额外等待怎样产生，为什么收益被压缩</title>
+<style>
+:root{--ink:#193149;--muted:#566c7f;--line:#dce4eb;--paper:#f5f7fa;--green:#087f79;--purple:#6953a4;--orange:#a95116}*{box-sizing:border-box}html{scroll-behavior:auto}body{margin:0;background:var(--paper);font-family:"Microsoft YaHei",system-ui,sans-serif;color:var(--ink);line-height:1.85}a{color:#1766a5}button{font:inherit}header,main,footer{max-width:1220px;margin:auto;padding:28px}header{padding-top:45px;padding-bottom:14px}.eyebrow{font-size:13px;letter-spacing:.08em;color:var(--muted)}h1{font-size:clamp(30px,4vw,45px);line-height:1.35;max-width:1030px;margin:15px 0 19px}h2{font-size:27px;line-height:1.5;margin:0 0 17px}h3{font-size:21px;margin:0 0 12px}p{margin:12px 0}.lead{font-size:20px;max-width:1040px}.tag{display:inline-block;padding:3px 11px;border:1px solid var(--line);border-radius:30px;margin:3px 5px 3px 0;font-size:13px;background:white}.panel{background:white;border:1px solid var(--line);border-radius:12px;padding:29px;margin-bottom:23px}.nav{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}.nav a{padding:5px 11px;background:white;border:1px solid var(--line);border-radius:6px;text-decoration:none;font-size:14px}.summary{border-left:5px solid var(--green);background:#edf7f4;padding:18px 22px;margin-top:20px}.summary p{margin:7px 0}.muted,.technical{color:var(--muted);font-size:14px}.technical{display:block;margin-top:6px}.key{color:var(--orange);font-weight:700}.note{padding:14px 18px;border-radius:7px;background:#edf3f8;font-size:15px}.note.warn{background:#fff3e6}.cols{display:grid;grid-template-columns:1fr 1fr;gap:18px}.role{padding:18px;border:1px solid var(--line);border-radius:9px;background:#f7fafc}.role.green{background:#eaf7f3;border-color:#bcded5}.role.orange{background:#fff2e3;border-color:#ecc49c}.role.purple{background:#f2eef9;border-color:#d9d0ed}.flow-wrap{overflow:auto;margin:20px 0}.flow{display:grid;grid-template-columns:1fr 46px 1.2fr 46px 1fr;gap:10px;min-width:900px;align-items:center}.flow .arrow{font-size:32px;text-align:center;color:var(--green)}.flow-down{display:grid;grid-template-columns:1fr 46px 1.2fr 46px 1fr;gap:10px;min-width:900px;margin-top:8px}.flow-down .role{grid-column:3}.up{text-align:center;font-size:27px;color:var(--purple);line-height:1}.trace-path{padding:15px;border:1px solid var(--line);border-radius:8px;margin:12px 0}.trace-path strong{color:var(--green)}.checklist{margin:10px 0;padding-left:23px}.checklist li{margin:8px 0}.timeline-buttons{display:flex;gap:8px;overflow:auto;padding:6px 0 13px}.timeline-buttons button{min-width:143px;padding:11px 10px;border:1px solid var(--line);border-radius:8px;background:#f7f9fc;color:var(--ink);cursor:pointer;text-align:left;line-height:1.5;font-size:14px}.timeline-buttons button span{display:block;color:var(--muted);font-size:12px}.timeline-buttons button.active{border-color:var(--green);background:#e8f6f2;box-shadow:inset 0 0 0 1px var(--green)}.state-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}.state{border:1px solid var(--line);padding:16px;border-radius:8px}.state b{display:block;margin-bottom:7px}.state p{font-size:15px;margin:0}.state-title{font-size:19px;margin:3px 0 16px}.big-number{font-size:35px;font-weight:700;color:var(--orange);line-height:1.4}.numbers{display:grid;grid-template-columns:1fr 1fr 1fr;gap:15px;margin:18px 0}.number-box{padding:17px;border:1px solid var(--line);border-radius:8px}.number-box b{display:block;font-size:27px}.number-box span{font-size:13px;color:var(--muted)}.numbers .gain b,.good{color:var(--green)}.numbers .cost b{color:var(--orange)}.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;margin:15px 0;font-size:15px}th,td{border-bottom:1px solid var(--line);padding:12px 11px;text-align:left;vertical-align:top}thead th{background:#f2f5f8}code{font-family:Consolas,monospace;font-size:13px;word-break:break-word}pre{background:#182b3b;color:#e8f1f8;padding:18px;border-radius:7px;font:12px/1.8 Consolas,monospace;overflow:auto;max-height:520px}details{border:1px solid var(--line);border-radius:8px;margin:15px 0;padding:13px 16px}summary{cursor:pointer;font-weight:600}details[open]>summary{margin-bottom:13px}.barline{display:grid;grid-template-columns:55px 1fr;gap:10px;align-items:center;margin:10px 0}.track{height:39px;background:#edf1f6;border-radius:5px;overflow:hidden;display:flex}.track i{display:block;font-style:normal;font-size:14px;height:100%;padding:6px 10px;color:white;white-space:nowrap}.off{background:#8194aa}.on{background:var(--green)}.remain{background:var(--purple)}.restore{background:#d79042}.bar-pair{margin:17px 0 22px}.bar-pair>b{font-size:16px}.legend{display:flex;flex-wrap:wrap;gap:18px;font-size:13px;color:var(--muted)}.legend i{display:inline-block;width:11px;height:11px;margin-right:5px}.route{background:#f7f9fc;border:1px solid var(--line);border-radius:9px;padding:20px}.step{padding:12px 14px;background:white;border:1px solid var(--line);border-radius:6px;margin:11px 0}.step.wait{background:#fff1df}.step.kv{background:#e9f7f2}.evidence-levels{display:grid;grid-template-columns:1fr 1fr 1fr;gap:13px}.evidence-levels>div{border:1px solid var(--line);border-radius:8px;padding:17px}.evidence-levels h3{font-size:17px}.sequence-scroll{overflow:auto}.sequence-scroll img{display:block;width:1450px;height:auto;max-width:none}.source-list li{margin:7px 0}.speech{padding:21px 24px;background:#edf7f4;border-left:4px solid var(--green);font-size:18px}footer{font-size:13px;color:var(--muted);padding-top:0}@media(max-width:800px){header,main,footer{padding:18px}.panel{padding:20px}.cols,.state-grid,.evidence-levels{grid-template-columns:1fr}.numbers{gap:8px}.number-box{padding:11px}.number-box b{font-size:21px}.lead{font-size:18px}.table-wrap table{min-width:650px}}@media print{body{background:white}header,main,footer{max-width:none;padding:12px}.panel{break-inside:avoid;border-radius:0}.nav,.timeline-buttons{display:none}details{break-inside:avoid}.flow,.flow-down{min-width:0}.sequence-scroll img{width:100%;max-width:100%}}
+</style></head><body>
+<header>
+<div class="eyebrow">KS · 机制与效果报告 · 整理日期 2026-10-23 · 实测材料来自10月19—21日</div>
+<h1>KV已经恢复好了，<br>为什么请求还在等？</h1>
+<p class="lead">主线是一个跨请求的绑定：<b>缓存命中的请求，其KV完成消息搭在正在计算的请求所属模型批的返回结果里。</b>前段worker已经交出消息，核心仍可能等到后段输出，才处理它。</p>
+<div><span class="tag">P侧接入LMCache</span><span class="tag">P：TP8／PP2／CP=true</span><span class="tag">D：DP4／TP4／PP1</span><span class="tag">原Mooncake传D</span><span class="tag">本次只整理，不运行实验</span></div>
+<div class="summary">
+<p><b>哪里多了等待：</b>KV就绪已被worker观察到，完成消息却没有及时推动请求状态更新；其中一条同worker路径测到约234ms。</p>
+<p><b>为什么效果有限：</b>一个完整命中的PP2样本组中，计算批窗口少了约78.6ms，新增恢复与推进窗口约87.7ms，P侧处理反而多约9.2ms。</p>
+<p><b>PP2增加了什么：</b>前后段可以先后返回，前段已有消息而后段尚未交最终结果；原来按整批交付消息的规则，使这个阶段差暴露出来。</p>
+</div>
+<p class="muted">三句话分别由下方的通知日志、动作收支、源码分支支持。通知日志与收支来自不同采样，不能把234ms再加到87.7ms上。</p>
+<nav class="nav"><a href="#mechanism">① 等待机制</a><a href="#logs">② 日志证据</a><a href="#performance">③ 两组效果对照</a><a href="#pp">④ PP1／PP2差异</a><a href="#brief">汇报用语</a></nav>
+</header>
+<main>
+<section class="panel" id="mechanism">
+<h2>前段已经返回，核心为什么还没更新状态？</h2>
+<p>固定只用两条请求：<b>正在计算的请求</b>在跑模型；<b>缓存命中的请求</b>已恢复历史KV，还要等待安排剩余token的计算。正在计算的请求不被假定为缓存未命中。</p>
+<div class="flow-wrap">
+<div class="flow">
+<div class="role green"><h3>前段worker</h3><b>“缓存命中的请求，我这份KV已经好了。”</b><p>把完成消息放进当前批次的返回信息。</p><span class="technical">（本次前41层的完成标记随execute回复返回。）</span></div>
+<div class="arrow">→</div>
+<div class="role orange"><h3>执行器</h3><b>本批最终模型结果尚未交付，按现有规则暂不处理前段KV消息。</b><p>既要收取各worker回复，也受最后输出的返回规则约束。</p><span class="technical">（先收齐响应；指定输出为None时，暂不聚合KV字段。）</span></div>
+<div class="arrow">⇢</div>
+<div class="role"><h3>调度核心／调度器</h3><b>还没有据此处理齐缓存完成消息。</b><p>缓存命中的请求继续等待，尚未被纳入后续计算。</p></div>
+</div>
+<div class="flow-down"><div class="role purple"><div class="up">↑</div><b>后段worker：正在计算的请求，其后37层及最后输出仍在推进。</b><span class="technical">（后续sample结果交付时，再沿返回链处理KV完成信息。）</span></div></div>
+</div>
+<p><b>后段未交最终结果，不代表后段没有开始算。</b>前段交出返回信息，也不代表消息已经被核心处理，或设备已经完全空闲。</p>
+<div class="cols">
+<div class="trace-path"><strong>这两件事没有必须的数据依赖</strong><p>缓存命中的请求不需要读取另一条请求的最终token，才能确认自己的KV恢复完成。需要的是它自己的必要KV分片成功恢复，并得到可靠确认。</p></div>
+<div class="trace-path"><strong>当前实现把返回时机绑定了</strong><p>前段已有的KV消息跟着整批模型结果整理；核心也正在这条结果等待流程里，所以没有立即更新缓存命中请求的状态。</p></div>
+</div>
+<p class="note">已有实例支持消息可以先交付：同一个缓存命中请求，后段8个worker的完成消息，先前已由不计算模型token的批次交给核心处理。后来前段8份搭上模型批，才遇到这里的延后。<span class="technical">（前一类为零token控制批，不是KV通知必须等待最终模型token。）</span></p>
+<details><summary>展开完整两请求时序图：角色、消息方向与等待</summary><div class="sequence-scroll"><img src="@@FULL_SEQUENCE@@" alt="用worker、执行器、调度核心的动作描述两条请求的时序图"></div></details>
+</section>
+
+<section class="panel" id="logs">
+<h2>日志显示：KV就绪后，通知还等了多久？</h2>
+<p>下面选历史四并发中的一个缓存命中请求、前段worker 0。它的完成消息搭在正在计算的请求所属批次上。<b>用同一路径计算间隔，不拿不同worker的最晚时间相减。</b></p>
+<div class="numbers"><div class="number-box"><b>350.934ms</b><span>前段worker观察到KV就绪</span></div><div class="number-box"><b>584.955ms</b><span>核心结果处理链计入该标记</span></div><div class="number-box cost"><b>234.021ms</b><span>两点间隔；不是保证可省的时间</span></div></div>
+<p class="muted">点击下面的时间点，查看各角色当时掌握了什么。数字相对于本轮最早READ提交；不是客户端发请求后的TTFT时间。</p>
+<div class="timeline-buttons" id="timeline-buttons"></div>
+<div class="state-title" id="state-title"></div>
+<div class="state-grid"><div class="state"><b>模型worker</b><p id="state-worker"></p></div><div class="state"><b>执行器／核心结果处理链</b><p id="state-executor"></p></div><div class="state"><b>调度器里的请求记录</b><p id="state-scheduler"></p></div></div>
+<p><b>最直接的判别：</b>这个worker查询到KV就绪后，约0.632ms就报告完成；随后到核心计数又经过约233.388ms。大段等待已经发生在设备就绪被观察到之后。</p>
+<div class="table-wrap"><table><thead><tr><th>实际观测动作</th><th>相对时间 ms</th><th>原事件名称</th><th>原日志行号</th></tr></thead><tbody>@@LOG_ROWS@@</tbody></table></div>
+<p class="note warn"><b>这条时间线能证明延后，尚不能证明整段可删。</b>前段方法约352.904ms结束，不代表消息当时已进入可读取队列；本例缺少逐worker响应队列的精确出入时间。核心计数还发生在后续结果整理期间，稍早于整次结果等待结束。<span class="technical">（584.955ms计数，585.560ms sample等待完整返回；不能把两者倒置。）</span></p>
+<details><summary>展开原始观测字段、请求身份与行号</summary><p>这是实际运行事件的<b>结构化归档字段摘录</b>，保留请求ID、worker编号、时间戳和原日志行号。它不是逐字复制的完整原trace正文；相对时间和文字说明是整理时附加的。</p>@@RAW_EVENTS@@</details>
+</section>
+
+<section class="panel" id="performance">
+<h2>两组代表性实验：省下的计算与新增的等待</h2>
+<h3>对照一：PP2完整命中，省下的计算窗口不足以覆盖新增成本</h3>
+<p>10月19日，12做P。4K输入、256输出、单并发；选ON完整命中且OFF输入相同的两对请求。ON实际只调度末token，OFF计算完整4096个输入token。</p>
+<div class="numbers"><div class="number-box gain"><b>−78.561ms</b><span>计算批窗口缩短</span></div><div class="number-box cost"><b>＋87.733ms</b><span>新增恢复与重新推进窗口</span></div><div class="number-box cost"><b>＋9.172ms</b><span>P处理窗口净增加2.05%</span></div></div>
+<div class="legend"><span><i style="background:#8194aa"></i>OFF原计算批窗口</span><span><i style="background:#6953a4"></i>ON剩余计算批窗口</span><span><i style="background:#d79042"></i>ON恢复与重新推进</span></div>
+<div class="barline"><span>OFF</span><div class="track"><i class="off" style="width:89.5739753%">447.870ms</i></div></div>
+<div class="barline"><span>ON</span><div class="track"><i class="remain" style="width:73.8618303%">369.309ms</i><i class="restore" style="width:17.5466023%">87.733ms</i></div></div>
+<p><b>计算关系：</b>OFF为447.870ms；ON为369.309＋87.733＝457.042ms。少算历史输入确实省了时间，但这两个样本中新增成本略大，最终P侧窗口略慢。</p>
+<p class="muted">这里的“计算批窗口”包括主机推进和执行依赖，不是纯NPU算术。“恢复与推进”从首次相关核心入队，到本请求计算批入队，包含恢复及调度推进，不是87.733ms纯搬运。P窗口不包含完整HTTP和PD链路，不能冒充客户端TTFT。n=2为局部机制样本。</p>
+<p class="note warn">这一组是19日单并发收支；上一节234ms来自21日四并发诊断。<b>234ms不属于这里87.733ms的可直接相加分项，也不能据此说净慢9ms已经全部归因到234ms通知延迟。</b></p>
+
+<h3 style="margin-top:28px">对照二：正式四并发，PP2有平均收益，但远小于另一套PP1布局</h3>
+<p>4K输入、256输出、并发4。每种形态分别取ON／OFF实际输入一致、双方都成功的27对请求；指标为客户端发出请求到首个输出的平均时间。<span class="technical">（平均TTFT，越低越好；两个形态的27对不是跨四列同一集合。）</span></p>
+<div class="table-wrap"><table><thead><tr><th>形态与P节点</th><th>OFF TTFT ms</th><th>ON TTFT ms</th><th>平均变化</th><th>样本</th></tr></thead><tbody>@@PERF_ROWS@@</tbody></table></div>
+@@PERF_CHART@@
+<div class="cols"><div class="role"><b>PP2：10月19日，P在12</b><p>P：DP1／TP8／PP2，DSA CP=true，41／37分层，MTP3。</p><p class="muted">每侧正式尝试32条。OFF成功30条，ON成功29条；配对延迟只用共同成功的27对。</p></div><div class="role"><b>PP1：10月20日，P在8</b><p>P：DP1／TP16／PP1，DSA CP=false，MTP3。</p><p class="muted">每侧正式尝试32条。OFF成功27条，ON成功32条；配对延迟只用共同成功的27对。</p></div></div>
+<p><b>可得出的结果：</b>PP2这组TTFT均值下降约6.78%，PP1那组下降约43.06%。因此报告不把现象写成“PP2所有测试都变慢”；更准确的状态是<b>局部成本抵消，整体收益有限且尚无稳定全面加速证据</b>。</p>
+<p class="muted">两组D均为137上的DP4／TP4／PP1、MTP3，P→D走原Mooncake，D不接LMCache。跨形态同时改变TP、CP、P机器／日期及观测条件；PP1还有自动CPU绑定失败。不能只归因PP，配对成功过滤也不能消除失败对闭环排队的全部影响。两种布局原来能被缓存省去的长输入执行成本也不同。</p>
+</section>
+
+<section class="panel" id="pp">
+<h2>PP1也会等，PP2的区别在哪里？</h2>
+<p><b>增加的是前后段分别完成、分别返回的阶段差；等待最终输出的规则原本两边都有。</b>本次PP2中，较早的前段消息没有立即被利用，仍跟着较晚的整批输出推进。</p>
+<p class="note"><b>先分清worker和请求。</b>本项目PP1使用TP16／DP1，16个worker共同计算同一批请求，各负责模型的一部分张量；不是一个worker独占命中请求，另一个独占未命中请求。若命中请求只剩1个token、另一请求还有很长输入，它们同批执行时仍可能受共同的批结果返回边界约束，PP1也有快的等慢的。</p>
+<p><b>报告里的通知等待是另一种情况：</b>缓存命中的请求当时还没进入正在计算请求的模型批，只是它的KV完成消息搭上了那个批的返回。因此不能把这段解释成“命中请求的1个token已经算完，在等另一个请求”。如果同一请求还有worker所需的KV没恢复，则必须等这些KV就绪；这与KV已就绪、通知仍未被核心处理要分开。</p>
+<div class="cols"><article class="route"><h3>PP1：一组worker负责全部78层</h3><div class="step">正在计算的请求经过这一组worker的模型调用；worker收尾时检查此前KV恢复。</div><div class="step kv">如果查到缓存命中的请求的KV好了，先保存完成消息。</div><div class="step wait">这组worker也负责最终输出；消息同样可能等到本批输出准备好，再经执行器交回核心。<span class="technical">（单段本身就是最后段；execute暂返None，sample再交付。）</span></div></article>
+<article class="route"><h3>PP2：前段可先回话，后段仍在推进</h3><div class="step">前段worker处理自己的41层后，就可以准备并交出缓存完成消息；后段继续负责余下37层和输出。</div><div class="step kv">前段已有回复，但不代表整批模型最终结果已交付。</div><div class="step wait">执行器沿用整批返回规则，核心未及时处理这条较早消息。<span class="technical">（非最后段提前返回；指定输出为None时暂不聚合KV信息。）</span></div></article></div>
+<p><b>潜在影响：</b>在名额、状态和设备依赖允许时，本可以前段处理缓存命中请求的新批、后段处理正在计算请求的旧批。完成消息晚处理，会限制这种机会；现有记录没有证明本例全部234ms都能变成提前计算。</p>
+<div class="evidence-levels"><div><h3>已经确认</h3><p>PP2有非最后段提前返回分支；本例设备就绪之后通知仍延后；原结果整理与核心等待路径与日志对应。</p></div><div><h3>有依据的解释</h3><p>阶段先后分离遇到整批通知方式，可能损失跨批重叠。这里不是KV内容必须依赖另一请求最终token。</p></div><div><h3>仍不能宣称</h3><p>PP1没有通知等待；PP2相对PP1净新增234ms；前段设备全程空闲；提前通知就必然提前计算。</p></div></div>
+<p class="note">还要分清计时起点：PP2前段可能较早查询到KV就绪，PP1该模型批路径可能较晚才查询。即使物理恢复时刻相同，“发现就绪→核心处理”的间隔也可能不同。必须再对上后续提交和设备开算，才能量化净损失。</p>
+<details><summary>展开对应源码与修改边界（不作为已验证提速）</summary><p>当前源码：非最后段的返回分支在模型runner约2353—2361行；最后段保存缓存信息、暂不交付最终输出，再在后续输出中带回，位于约2409—2416、2423和2556行。执行器的结果整理先判断负责最终输出的worker是否返回模型结果。<span class="technical">（IntermediateTensors、execute／sample、KVOutputAggregator.aggregate的None判断。）</span></p><p>改进方向是：把已经验证的KV完成消息更早交给核心处理，同时保留正在计算请求的完整结果、原输出顺序、资源持有和批名额。此前vLLM通知候选和LMCache同步加载候选均未启用，CPU结果不证明设备正确性或TTFT收益。本报告不安排新的实验。</p></details>
+</section>
+
+<section class="panel" id="brief"><h2>可以直接这样汇报</h2><div class="speech">原形态下，LMCache已经实现历史KV复用，但收益受限。我们确认了一条额外的控制等待：部分缓存命中请求的KV已经就绪，其完成消息却搭在另一模型批的结果里，直到后续输出处理阶段才被核心计入。PP2让前段较早返回、后段尚未交最终输出的阶段差显现出来，当前整批交付消息的方式没有及时利用前段信息。代表性的PP2完整命中样本中，少算历史输入节省约78.6ms，新增恢复与推进约87.7ms，P侧窗口净慢约9.2ms；另一组正式四并发TTFT仍有约6.78%的平均改善，说明状态是收益有限，并非所有请求都变慢。通知延迟与收支来自不同采样，尚不能把整段通知等待视为可删除收益，也不能把差距全部归因于PP。</div></section>
+
+<details><summary>证据入口与归档口径</summary><ul class="source-list">@@SOURCE_LINKS@@</ul><p>本报告全部来自已有配置、原始事件字段和已归档结果；无新请求、无占卡、无服务启停、无推理源码变更。新建文件只有报告、数据摘录与生成入口。KS-MEM-001保持OPEN。</p></details>
+</main><footer>报告整理：KS项目 · 2026-10-23。所有时间均标明测量边界；不同采样、不同rank、并行设备区间不直接相加。未检验统计显著性，候选修改收益为NOT_VERIFIED。</footer>
+<script id="report-data" type="application/json">@@DATA_JSON@@</script>
+<script>
+const report=JSON.parse(document.getElementById('report-data').textContent);
+const buttons=document.getElementById('timeline-buttons');
+function showState(index){const s=report.timeline_states[index];document.getElementById('state-title').textContent=s.time.toFixed(3)+' ms · '+s.label;for(const key of ['worker','executor','scheduler'])document.getElementById('state-'+key).textContent=s[key];[...buttons.children].forEach((b,i)=>{b.classList.toggle('active',i===index);b.setAttribute('aria-pressed',i===index?'true':'false');});}
+report.timeline_states.forEach((s,i)=>{const b=document.createElement('button');b.type='button';b.textContent=(i+1)+' '+s.label;const t=document.createElement('span');t.textContent=s.time.toFixed(3)+' ms';b.appendChild(t);b.addEventListener('click',()=>showState(i));buttons.appendChild(b);});showState(0);
+</script></body></html>

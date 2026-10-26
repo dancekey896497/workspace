@@ -1,0 +1,746 @@
+{
+  "schema": "ks.explained.source_code.v1",
+  "title": "完成通知怎样搭上模型结果：六组真实源码与白话解释",
+  "date": "2026-10-21",
+  "scope": "纯本地报告材料；只从已归档的当前实际运行源码摘录，不修改推理源码、服务或配置，不新增设备实验。",
+  "reading_note": "先计算请求指C4中先进入正计算的第3条；缓存已恢复请求主要指第2/第4条。代码里的request_id可以是另一条请求，完成通知不必属于正在执行模型的请求。",
+  "excerpt_policy": "六组均为actual_source_excerpt。每组8–20行，片段保持来源原文与缩进；多个fragment之间明确有省略，不能将其当作可独立运行文件。解释和教学伪代码不混进真实代码块。当前运行源码含本轮_ks观测调用，原样保留。",
+  "render_labels": {
+    "terms": "先认清七个词",
+    "function": "实际函数",
+    "snapshot": "当前源码只读副本",
+    "key_lines": "关键行",
+    "steps": "逐步读",
+    "proves": "能证明",
+    "limits": "不能据此证明",
+    "supporting": "另外两道边界：容量与输出队列",
+    "pseudocode": "独立教学伪代码：不是运行补丁",
+    "design": "候选实现的边界",
+    "evidence": "证据入口",
+    "verification": "摘录核对"
+  },
+  "source_bundles": {
+    "cpu": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/current-cpu-source-and-native-maps.json",
+    "kv": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/current-native-and-kv-source.json",
+    "futures": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/kv-future-and-binary-metadata.json",
+    "adapter": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/cache/actual-kv-readiness-source.json",
+    "return_type": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/cache/retrieve-return-type.json",
+    "worker": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/notification/actual-p8-worker-output-source.json",
+    "capacity": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/notification/installed-max-concurrent-config.json",
+    "core_config": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/notification/installed-config-boundary.json"
+  },
+  "terms": [
+    {
+      "term": "worker / rank",
+      "plain": "一个执行模型分片的工作进程及其编号。本次P有16个rank；rank不是请求编号。"
+    },
+    {
+      "term": "PP前段 / 后段",
+      "plain": "模型被分成先后两段；本次rank0–7执行前段，rank8–15执行后段。"
+    },
+    {
+      "term": "device event",
+      "plain": "设备上的完成标记。query看见ready，表示检查时事件已就绪；它不是物理完成的精确时间戳。"
+    },
+    {
+      "term": "Future",
+      "plain": "稍后才能得到的结果凭证。它可以已经收到消息、仍等设备，也可以设备已就绪、但核心还没消费结果。"
+    },
+    {
+      "term": "KVConnectorOutput",
+      "plain": "worker带回核心的缓存控制信息袋，包括收发完成请求、错误块和统计；不是KV数据本身。"
+    },
+    {
+      "term": "scheduler",
+      "plain": "决定下一批让哪些请求计算多少token的调度器。worker知道缓存好了，不等于scheduler已经知道。"
+    },
+    {
+      "term": "零token批",
+      "plain": "本轮没有模型token要算的批次，仍可传递缓存metadata和完成信息。本次不能把所有零批都称为纯轮询，也不能把它们算成重复READ。"
+    }
+  ],
+  "snippets": [
+    {
+      "id": "device_ready",
+      "title": "1. 设备future怎样确认ready",
+      "kind": "actual_source_excerpt",
+      "function": "DeviceMessagingFuture.query",
+      "fragments": [
+        {
+          "bundle": "futures",
+          "selector": {
+            "kind": "future_method",
+            "class": "DeviceMessagingFuture",
+            "name": "query"
+          },
+          "line_start": 371,
+          "line_end": 389,
+          "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/lmcache/v1/multiprocess/futures.py",
+          "code": "def query(self) -> bool:\n        \"\"\"\n        Check if the future is done.\n\n        Returns:\n            bool: True if the future is done, False otherwise.\n        \"\"\"\n        if self._raw_response_processed:\n            if self.event_ is None:\n                return True\n            return self._event_backend.query_event(self.event_)\n\n        if self.raw_future_.query():\n            self._on_raw_future_complete()\n            if self.event_ is None:\n                return True\n            return self._event_backend.query_event(self.event_)\n\n        return False",
+          "source_bundle_path": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/kv-future-and-binary-metadata.json"
+        }
+      ],
+      "omission_note": "excerpt：展示query完整方法；被调用的_on_raw_future_complete负责取得响应并导入event，其方法体未在此重复展示。",
+      "key_lines": [
+        {
+          "match": "if self.raw_future_.query():",
+          "explanation": "先确认底层消息结果已经回来，才有资格处理它携带的设备event。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/lmcache/v1/multiprocess/futures.py",
+              "line": 383,
+              "code": "        if self.raw_future_.query():"
+            }
+          ]
+        },
+        {
+          "match": "self._on_raw_future_complete()",
+          "explanation": "取出响应、导入返回的event，并记住响应已经处理。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/lmcache/v1/multiprocess/futures.py",
+              "line": 384,
+              "code": "            self._on_raw_future_complete()"
+            }
+          ]
+        },
+        {
+          "match": "return self._event_backend.query_event(self.event_)",
+          "explanation": "有event时还要向设备后端查询就绪；不是只看RPC响应。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/lmcache/v1/multiprocess/futures.py",
+              "line": 381,
+              "code": "            return self._event_backend.query_event(self.event_)"
+            },
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/lmcache/v1/multiprocess/futures.py",
+              "line": 387,
+              "code": "            return self._event_backend.query_event(self.event_)"
+            }
+          ]
+        }
+      ],
+      "plain_steps": [
+        "底层响应没回来时，返回False。",
+        "响应回来后，先处理响应中的设备event。",
+        "存在event就查询设备event；没有event的分支直接返回True，两种语义不能混读。",
+        "本次64条真实ready记录的event_id均非空、raw_response_processed均为True，future/raw id均与对应提交精确匹配。"
+      ],
+      "proves": [
+        "本次实际DeviceMessagingFuture在有event的路径中会检查设备就绪，不能将其完成报告降格成纯RPC ACK。"
+      ],
+      "does_not_prove": [
+        "不能给出DMA/event物理完成的精确时刻；事件可能更早完成，到轮询时才被发现。",
+        "不能把handler的主机结束时间当作设备完成时间。"
+      ],
+      "next": "collect_ready",
+      "excerpt_line_count": 19
+    },
+    {
+      "id": "collect_ready",
+      "title": "2. worker怎样把ready收进完成集合",
+      "kind": "actual_source_excerpt",
+      "function": "LMCache adapter.get_finished（retrieve循环）",
+      "fragments": [
+        {
+          "bundle": "adapter",
+          "selector": {
+            "kind": "adapter_method",
+            "path_suffix": "vllm_multi_process_adapter.py",
+            "name": "get_finished"
+          },
+          "line_start": 2162,
+          "line_end": 2174,
+          "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/lmcache/integration/vllm/vllm_multi_process_adapter.py",
+          "code": "        for request_id, (r_future, r_block_ids) in self.retrieve_futures.items():\n            _ks_ready = r_future.query()\n            _ks_completion_query(self, request_id, r_future, \"RETRIEVE\", _ks_ready)\n            if not _ks_ready:\n                continue\n\n            with _ks_completion_result(self, request_id, r_future, \"RETRIEVE\"):\n                r_result = r_future.result(timeout=60)\n            finished_retrieves.add(request_id)\n\n            if not r_result:\n                self.error_block_ids.update(r_block_ids)\n                self._failed_request_ids.add(request_id)",
+          "source_bundle_path": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/cache/actual-kv-readiness-source.json"
+        }
+      ],
+      "omission_note": "excerpt：只展示retrieve循环的查询、结果确认和错误块处理；省略store、清理跟踪字典、返回集合及日志细节。",
+      "key_lines": [
+        {
+          "match": "_ks_ready = r_future.query()",
+          "explanation": "询问缓存已恢复请求的future是否ready。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/lmcache/integration/vllm/vllm_multi_process_adapter.py",
+              "line": 2163,
+              "code": "            _ks_ready = r_future.query()"
+            }
+          ]
+        },
+        {
+          "match": "r_result = r_future.result(timeout=60)",
+          "explanation": "ready之后仍取结果；DeviceMessagingFuture的该路径还会等待/同步event。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/lmcache/integration/vllm/vllm_multi_process_adapter.py",
+              "line": 2169,
+              "code": "                r_result = r_future.result(timeout=60)"
+            }
+          ]
+        },
+        {
+          "match": "finished_retrieves.add(request_id)",
+          "explanation": "将请求放进本轮收集到的恢复完成集合。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/lmcache/integration/vllm/vllm_multi_process_adapter.py",
+              "line": 2170,
+              "code": "            finished_retrieves.add(request_id)"
+            }
+          ]
+        },
+        {
+          "match": "self.error_block_ids.update(r_block_ids)",
+          "explanation": "完成还可能携带失败状态，错误块不能在提前通知方案中丢掉。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/lmcache/integration/vllm/vllm_multi_process_adapter.py",
+              "line": 2173,
+              "code": "                self.error_block_ids.update(r_block_ids)"
+            }
+          ]
+        }
+      ],
+      "plain_steps": [
+        "遍历正在恢复缓存的请求，逐个query。",
+        "未ready就继续等待后续轮询；ready才取result。",
+        "把已确认结果的请求加入finished_retrieves，失败时同时标记错误块。",
+        "上层mixin在本次前向context的finally里调用get_finished，再把集合装入KVConnectorOutput；因此先计算请求的输出袋里可能装着另一条请求的完成通知。"
+      ],
+      "proves": [
+        "设备future就绪、worker收集完成集合、核心消费集合是不同动作。",
+        "defer_finalize只延后wait_for_save/clear metadata，本次仍在draft之前收集get_finished。"
+      ],
+      "does_not_prove": [
+        "收集到finished_retrieves不等于核心或scheduler已经收到。",
+        "不证明以后增加轮询线程是安全或必要的；本次候选优先复用已有载荷。"
+      ],
+      "next": "carrier",
+      "excerpt_line_count": 13
+    },
+    {
+      "id": "carrier",
+      "title": "3. 最后PP段先返回None，sample再带回同一袋KV信息",
+      "kind": "actual_source_excerpt",
+      "function": "Ascend runner.execute_model / sample_tokens（本次生成路径）",
+      "fragments": [
+        {
+          "bundle": "kv",
+          "selector": {
+            "kind": "kv_segment",
+            "path_suffix": "vllm_ascend/worker/model_runner_v1.py",
+            "segment_line": 2401
+          },
+          "line_start": 2409,
+          "line_end": 2416,
+          "context": "execute_model继续走到最后PP段的路径；前文非最后段已返回IntermediateTensors。",
+          "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm_ascend/worker/model_runner_v1.py",
+          "code": "            self.kv_connector_output = kv_connector_output\n\n        # Now the batch has been launched we can wait for corrections from the\n        # previous model forward without breaking async scheduling.\n        if deferred_state_corrections_fn:\n            with _ks_span('runner_detail.deferred_corrections'):\n                deferred_state_corrections_fn()\n        return None",
+          "source_bundle_path": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/current-native-and-kv-source.json"
+        },
+        {
+          "bundle": "kv",
+          "selector": {
+            "kind": "kv_segment",
+            "path_suffix": "vllm_ascend/worker/model_runner_v1.py",
+            "segment_line": 2401
+          },
+          "line_start": 2423,
+          "line_end": 2424,
+          "context": "sample_tokens入口取出之前保留的KV输出对象。",
+          "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm_ascend/worker/model_runner_v1.py",
+          "code": "        kv_connector_output = self.kv_connector_output\n        self.kv_connector_output = None",
+          "source_bundle_path": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/current-native-and-kv-source.json"
+        },
+        {
+          "bundle": "kv",
+          "selector": {
+            "kind": "kv_segment",
+            "path_suffix": "vllm_ascend/worker/model_runner_v1.py",
+            "segment_line": 2548
+          },
+          "line_start": 2550,
+          "line_end": 2556,
+          "context": "在sample构造模型返回值时携带KV输出；构造器后续字段在excerpt之外。",
+          "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm_ascend/worker/model_runner_v1.py",
+          "code": "        model_runner_output = ModelRunnerOutput(\n            req_ids=req_ids_output_copy,\n            req_id_to_index=req_id_to_index_output_copy,\n            sampled_token_ids=valid_sampled_token_ids,\n            logprobs=logprobs_lists,\n            prompt_logprobs_dict=prompt_logprobs_dict,\n            kv_connector_output=kv_connector_output,",
+          "source_bundle_path": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/current-native-and-kv-source.json"
+        }
+      ],
+      "omission_note": "excerpt：三处原文，中间明确省略；省略前向状态保存、采样/MTP/late finalize及构造器后续字段，代码没有改写。这里的execute None是该路径的协议行为，不是缓存未命中或sample失败。",
+      "key_lines": [
+        {
+          "match": "self.kv_connector_output = kv_connector_output",
+          "explanation": "把已经收集好的KV控制信息保存在runner对象中。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm_ascend/worker/model_runner_v1.py",
+              "line": 2409,
+              "code": "            self.kv_connector_output = kv_connector_output"
+            }
+          ]
+        },
+        {
+          "match": "return None",
+          "explanation": "本次最后PP段execute并不在这里交付最终ModelRunnerOutput。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm_ascend/worker/model_runner_v1.py",
+              "line": 2416,
+              "code": "        return None"
+            }
+          ]
+        },
+        {
+          "match": "kv_connector_output = self.kv_connector_output",
+          "explanation": "后续sample取回之前的KV对象。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm_ascend/worker/model_runner_v1.py",
+              "line": 2423,
+              "code": "        kv_connector_output = self.kv_connector_output"
+            }
+          ]
+        },
+        {
+          "match": "kv_connector_output=kv_connector_output",
+          "explanation": "sample的模型输出才把这个KV对象带回结果链。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm_ascend/worker/model_runner_v1.py",
+              "line": 2556,
+              "code": "            kv_connector_output=kv_connector_output,"
+            }
+          ]
+        }
+      ],
+      "plain_steps": [
+        "前段execute会返回中间激活和KV控制信息；最后段生成路径保留KV对象后先返回None。",
+        "随后sample取回同一个KV对象，再进行采样、MTP和late finalize等动作。",
+        "sample的ModelRunnerOutput携带KV控制信息。前段execute与sample也可能镜像带回同一份完成集合。",
+        "因此缓存已恢复请求的通知，可以搭在先计算请求的execute/sample结果上。"
+      ],
+      "proves": [
+        "通知已被worker收集，仍可能因为承载方式而等到sample结果才能进入核心聚合。"
+      ],
+      "does_not_prove": [
+        "不能据此说MTP是实际设备耗时主因；承载等待与MTP实际工作量是两类问题。",
+        "不说明所有runner/池化/其他配置都按这个分支返回None。"
+      ],
+      "next": "none_gate",
+      "excerpt_line_count": 17
+    },
+    {
+      "id": "none_gate",
+      "title": "4. 聚合器为什么跳过execute里的前段完成信息",
+      "kind": "actual_source_excerpt",
+      "function": "KVOutputAggregator.aggregate",
+      "fragments": [
+        {
+          "bundle": "kv",
+          "selector": {
+            "kind": "kv_segment",
+            "path_suffix": "kv_connector/utils.py",
+            "segment_line": 66
+          },
+          "line_start": 66,
+          "line_end": 72,
+          "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/distributed/kv_transfer/kv_connector/utils.py",
+          "code": "    def aggregate(\n        self, outputs: list[ModelRunnerOutput | None], output_rank: int = 0\n    ) -> ModelRunnerOutput | None:\n        if not outputs[output_rank]:\n            return None\n\n        # Aggregate kv_connector_output from all workers",
+          "source_bundle_path": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/current-native-and-kv-source.json"
+        },
+        {
+          "bundle": "kv",
+          "selector": {
+            "kind": "kv_segment",
+            "path_suffix": "kv_connector/utils.py",
+            "segment_line": 66
+          },
+          "line_start": 94,
+          "line_end": 98,
+          "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/distributed/kv_transfer/kv_connector/utils.py",
+          "code": "        for model_runner_output in outputs:\n            assert model_runner_output is not None\n            kv_output = model_runner_output.kv_connector_output\n            if not kv_output:\n                continue",
+          "source_bundle_path": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/current-native-and-kv-source.json"
+        },
+        {
+          "bundle": "kv",
+          "selector": {
+            "kind": "kv_segment",
+            "path_suffix": "kv_connector/utils.py",
+            "segment_line": 66
+          },
+          "line_start": 115,
+          "line_end": 117,
+          "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/distributed/kv_transfer/kv_connector/utils.py",
+          "code": "            update_finished_set(\n                kv_output.finished_recving, self._recv_remaining_count, finished_recving\n            )",
+          "source_bundle_path": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/current-native-and-kv-source.json"
+        }
+      ],
+      "omission_note": "excerpt：三处原文，省略计数helper定义、统计/metadata聚合等。门禁在遍历所有worker之前，不能把它解释成只跳过那个空rank。",
+      "key_lines": [
+        {
+          "match": "if not outputs[output_rank]:",
+          "explanation": "先看被指定为主要输出的rank是否给了模型输出。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/distributed/kv_transfer/kv_connector/utils.py",
+              "line": 69,
+              "code": "        if not outputs[output_rank]:"
+            }
+          ]
+        },
+        {
+          "match": "return None",
+          "explanation": "若为空，整次聚合直接返回；下面所有worker的KV完成信息都不会计数。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/distributed/kv_transfer/kv_connector/utils.py",
+              "line": 70,
+              "code": "            return None"
+            }
+          ]
+        },
+        {
+          "match": "for model_runner_output in outputs:",
+          "explanation": "只有通过门禁，才开始逐worker处理KV输出。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/distributed/kv_transfer/kv_connector/utils.py",
+              "line": 94,
+              "code": "        for model_runner_output in outputs:"
+            }
+          ]
+        },
+        {
+          "match": "kv_output.finished_recving, self._recv_remaining_count",
+          "explanation": "将收到的完成集合累入剩余份数计数器。本次需要16份，不是所有部署固定16。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/distributed/kv_transfer/kv_connector/utils.py",
+              "line": 116,
+              "code": "                kv_output.finished_recving, self._recv_remaining_count, finished_recving"
+            }
+          ]
+        }
+      ],
+      "plain_steps": [
+        "本次PP2指定的主要输出rank是8，前段为0–7。",
+        "最后段execute返回None时，门禁立即返回，前段execute已有的KV完成袋也没进入计数。",
+        "sample的主要输出非空后，才遍历全部worker，把前段剩余报告补齐。",
+        "这解释了本次后段8份早已计数、前段8份却等sample；同类门禁PP1也存在，不能叫PP独有协议。"
+      ],
+      "proves": [
+        "本次前段报告可以被selected-output门禁延后，而不是一定仍在拷贝。"
+      ],
+      "does_not_prove": [
+        "直接移动这句门禁就能安全修复。真实CPU负对照已显示：sample镜像未在计数前去重，会留下错误的残余计数。",
+        "不能绕过错误块、所需rank份数或请求生命周期约束。"
+      ],
+      "next": "allrank_receive",
+      "excerpt_line_count": 15
+    },
+    {
+      "id": "allrank_receive",
+      "title": "5. 核心怎样读齐所有worker响应",
+      "kind": "actual_source_excerpt",
+      "function": "MultiprocExecutor.collective_rpc / nested get_response",
+      "fragments": [
+        {
+          "bundle": "cpu",
+          "selector": {
+            "kind": "cpu_method",
+            "name": "collective_rpc"
+          },
+          "line_start": 368,
+          "line_end": 369,
+          "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/v1/executor/multiproc_executor.py",
+          "code": "        if kv_output_aggregator is not None:\n            output_rank = None",
+          "source_bundle_path": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/current-cpu-source-and-native-maps.json"
+        },
+        {
+          "bundle": "cpu",
+          "selector": {
+            "kind": "cpu_method",
+            "name": "collective_rpc"
+          },
+          "line_start": 388,
+          "line_end": 404,
+          "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/v1/executor/multiproc_executor.py",
+          "code": "        def get_response():\n            responses = []\n            for mq in response_mqs:\n                dequeue_timeout = (\n                    None if deadline is None else (deadline - time.monotonic())\n                )\n                try:\n                    status, result = mq.dequeue(timeout=dequeue_timeout)\n                except TimeoutError as e:\n                    raise TimeoutError(f\"RPC call to {method} timed out.\") from e\n                if status != WorkerProc.ResponseStatus.SUCCESS:\n                    raise RuntimeError(\n                        f\"Worker failed with error '{result}', please check the\"\n                        \" stack trace above for the root cause\"\n                    )\n                responses.append(result)\n            return responses[0] if output_rank is not None else responses",
+          "source_bundle_path": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/current-cpu-source-and-native-maps.json"
+        }
+      ],
+      "omission_note": "excerpt：两处原文。中间省略aggregate绑定和发送设置；完整方法在启用KV聚合时令output_rank=None，保留response_mqs全列表，而不是只读主要输出rank。异常处理保留在展示的循环中。",
+      "key_lines": [
+        {
+          "match": "output_rank = None",
+          "explanation": "启用KV聚合后，RPC需要全部worker回复。它与聚合器内部选择哪个output_rank是两层不同设置。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/v1/executor/multiproc_executor.py",
+              "line": 369,
+              "code": "            output_rank = None"
+            }
+          ]
+        },
+        {
+          "match": "for mq in response_mqs:",
+          "explanation": "按各worker响应队列的既定顺序逐个读取。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/v1/executor/multiproc_executor.py",
+              "line": 390,
+              "code": "            for mq in response_mqs:"
+            }
+          ]
+        },
+        {
+          "match": "status, result = mq.dequeue",
+          "explanation": "队列没结果时会等待；前一个队列阻塞时，后面的队列即使可能已有消息，也还没读到。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/v1/executor/multiproc_executor.py",
+              "line": 395,
+              "code": "                    status, result = mq.dequeue(timeout=dequeue_timeout)"
+            }
+          ]
+        },
+        {
+          "match": "responses.append(result)",
+          "explanation": "先收集所有响应，整个get_response返回之后才执行聚合回调。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/v1/executor/multiproc_executor.py",
+              "line": 403,
+              "code": "                responses.append(result)"
+            }
+          ]
+        }
+      ],
+      "plain_steps": [
+        "KV聚合开启后，执行器保留所有响应队列。",
+        "get_response逐队列读取并检查成功/失败。",
+        "全部响应收齐后返回列表，FutureWrapper才调用aggregate。",
+        "worker方法返回只说明载荷构造完成；当前输出链还可经过async_output_queue再进响应MQ，不能直接当作MQ已可读。"
+      ],
+      "proves": [
+        "现有通知会受完整响应收集路径约束。",
+        "候选的更小入口是读取到前段execute载荷时复制完成信息，而不是新增worker轮询。"
+      ],
+      "does_not_prove": [
+        "本次所有前段消息在worker.end时已可读；缺实际响应MQ入队/出队时刻。",
+        "不能让多个reader同时争读同一response MQ，否则可能错配命令回复。"
+      ],
+      "next": "core_wait",
+      "excerpt_line_count": 19
+    },
+    {
+      "id": "core_wait",
+      "title": "6. 为什么只加通知inbox仍然不够",
+      "kind": "actual_source_excerpt",
+      "function": "EngineCore.step_with_batch_queue",
+      "fragments": [
+        {
+          "bundle": "cpu",
+          "selector": {
+            "kind": "cpu_method",
+            "name": "step_with_batch_queue"
+          },
+          "line_start": 562,
+          "line_end": 570,
+          "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/v1/engine/core.py",
+          "code": "        # Block until the next result is available.\n        future, scheduler_output, exec_model_fut = batch_queue.pop()\n        _ks_core_mark_batch(\"core.batch_dequeued\", scheduler_output, future_id=id(future), raw_future_id=id(exec_model_fut), core_batch_queue_depth=len(batch_queue))\n        with (\n            self.log_error_detail(scheduler_output),\n            self.log_iteration_details(scheduler_output),\n        ):\n            with _ks_batch_span('core.output_future_wait', scheduler_output, core_wait_future_id=id(future), core_batch_queue_depth=len(batch_queue)):\n                model_output = future.result()",
+          "source_bundle_path": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/current-cpu-source-and-native-maps.json"
+        },
+        {
+          "bundle": "cpu",
+          "selector": {
+            "kind": "cpu_method",
+            "name": "step_with_batch_queue"
+          },
+          "line_start": 580,
+          "line_end": 585,
+          "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/v1/engine/core.py",
+          "code": "        with _ks_batch_span('core.process_aborts', scheduler_output, core_batch_queue_depth=len(batch_queue)):\n            self._process_aborts_queue()\n        with _ks_batch_span('core.update_from_output', scheduler_output, core_batch_queue_depth=len(batch_queue)):\n            engine_core_outputs = self.scheduler.update_from_output(\n                scheduler_output, model_output\n            )",
+          "source_bundle_path": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/current-cpu-source-and-native-maps.json"
+        }
+      ],
+      "omission_note": "excerpt：两处原文，中间省略None/异常处理。完整代码会保留execute异常，不是吞掉错误。前段execute的合法None与此处sample最终结果异常的None不要混为一谈。",
+      "key_lines": [
+        {
+          "match": "future, scheduler_output, exec_model_fut = batch_queue.pop()",
+          "explanation": "取出一批准备等待；从deque取出并不意味着该批已经完成或释放名额。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/v1/engine/core.py",
+              "line": 563,
+              "code": "        future, scheduler_output, exec_model_fut = batch_queue.pop()"
+            }
+          ]
+        },
+        {
+          "match": "model_output = future.result()",
+          "explanation": "核心主线程在这里同步等待，等待期间不会自动再次进入scheduler。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/v1/engine/core.py",
+              "line": 570,
+              "code": "                model_output = future.result()"
+            }
+          ]
+        },
+        {
+          "match": "self._process_aborts_queue()",
+          "explanation": "完整模型结果回来后，先处理期间发生的中止。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/v1/engine/core.py",
+              "line": 581,
+              "code": "            self._process_aborts_queue()"
+            }
+          ]
+        },
+        {
+          "match": "engine_core_outputs = self.scheduler.update_from_output(",
+          "explanation": "随后才按顺序将模型结果交给scheduler。",
+          "locations": [
+            {
+              "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/v1/engine/core.py",
+              "line": 583,
+              "code": "            engine_core_outputs = self.scheduler.update_from_output("
+            }
+          ]
+        }
+      ],
+      "plain_steps": [
+        "核心取出队首批次并等待它的完整结果。",
+        "当前FutureWrapper.result还会按命令顺序排空排在前面的Future；本次先等同一先计算请求的execute，再等它自己的sample。",
+        "主线程阻塞时，即使另建inbox收到通知，也不会自动重新调度缓存已恢复请求。",
+        "因此候选需要分离响应读取推进与核心整批结果等待，并让核心可被控制通知唤醒；scheduler仍由核心单线程修改。"
+      ],
+      "proves": [
+        "只提前写ready集合或只加inbox不足以保证提速。",
+        "通知推进、模型结果顺序和批容量必须一起考虑。"
+      ],
+      "does_not_prove": [
+        "提前知道ready就有合法计算名额；本例先计算批与零token控制批已共占两份逻辑名额。",
+        "不能从本文源码片段推出几行补丁即可修完或能节省多少毫秒。"
+      ],
+      "next": null,
+      "excerpt_line_count": 15
+    }
+  ],
+  "supporting_facts": [
+    {
+      "id": "capacity",
+      "title": "本次队列容量为什么是2",
+      "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/config/vllm.py",
+      "function": "max_concurrent_batches",
+      "line_start": 497,
+      "line_end": 507,
+      "source_bundle": "capacity",
+      "plain": "本次V1 runner、PP2时，async开或关均返回pp_size=2。core.py:194–202按该值建立batch_queue，220–222据是否存在队列选择step_with_batch_queue。关闭async并不会据此消除PP批队列。"
+    },
+    {
+      "id": "worker_output",
+      "title": "worker.end还不是响应MQ可读",
+      "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/v1/executor/multiproc_executor.py",
+      "function": "WorkerProc.handle_output / enqueue_output / async_output_busy_loop",
+      "source_bundle": "worker",
+      "plain": "当前P8 handle_output:949可先放入async_output_queue；async_output_busy_loop:959再取出；enqueue_output:934最终放入response MQ。故worker方法已返回与MQ实际可读之间仍有未观测边。"
+    },
+    {
+      "id": "collect_call_site",
+      "title": "收集位置在前向finally，不是MTP后才第一次查",
+      "source_path": "/dev/shm/ks-ttft-prepare-20261020/runtime/vllm/v1/worker/kv_connector_model_runner_mixin.py",
+      "function": "_get_kv_connector_output / finalize_kv_connector",
+      "line_start": 81,
+      "line_end": 122,
+      "source_bundle": "kv",
+      "plain": "finally里调用get_finished；defer_finalize=True仍然收集，只延后wait_for_save和clear metadata。不能把后续通知晚到解释成等MTP后才第一次查询。"
+    }
+  ],
+  "teaching_pseudocode": [
+    {
+      "id": "current",
+      "title": "教学伪代码：本次当前路径",
+      "kind": "teaching_pseudocode_not_executable_patch",
+      "language": "text",
+      "warning": "教学伪代码，不是实际源码，不可当作可执行补丁；只描述本次已闭合的C4路径。",
+      "code": "零token控制往返先把缓存已恢复请求的后段8份完成信息交给核心\n核心提交先计算请求的 execute，再提交它的 sample\n前段worker结束前向时，query发现缓存已恢复请求的其余完成信息\n前段把这些完成信息装进先计算请求的execute返回值\n核心同步等待先计算请求的完整结果\n  先收齐它的execute全部worker响应\n  主要输出rank返回None，整次KV聚合被跳过\n  再等它的sample；sample镜像带回此前的KV信息\n  这时前段剩余8份才被核心计数\n核心把完整完成集合交给scheduler，再判断下一批能否入场",
+      "plain": "恢复完成是另一条请求的控制状态，但当前状态的交付时机依附在先计算请求的模型结果链上。"
+    },
+    {
+      "id": "candidate",
+      "title": "教学伪代码：候选解耦边界",
+      "kind": "teaching_pseudocode_not_executable_patch",
+      "language": "text",
+      "warning": "教学伪代码，不是实际源码或可执行补丁；DESIGN_ONLY，尚未应用或通过真实生命周期/性能验收。",
+      "code": "唯一响应读取者：\n  仍按原命令顺序读取每条worker响应MQ并推进Future\n  读到前段execute载荷时，复制缓存已恢复请求的完成记录到inbox\n核心线程：\n  等待通知可消费，或队首完整模型输出已完成\n  只在本线程按请求代次和rank去重，处理完成及错误信息\n  完整模型输出仍按原顺序更新scheduler\n  仅在报告齐、KV安全且预算合法时考虑提交缓存已恢复请求\n预算是另一个设计选择：\n  可研究计算批与控制批分别记账，但不是清空原队列\n  控制批仍保留Future、命令顺序、错误和所持资源\n  若坚持原总在途上限2不变，先计算批加控制批占满时仍不能再发一批",
+      "plain": "single reader与可唤醒core等待缺一不可；由reader接管Future推进后，core不能再同步争读同一MQ/排空同一Future队列。模型输出顺序与scheduler单线程仍保留。"
+    }
+  ],
+  "design_boundary": [
+    "现有后段8份已经真实计数，本例优先复用前段execute载荷，不新建后段/allrank通知IPC，也不新增get_finished轮询线程。",
+    "提前处理通知必须在计数前去重sample镜像，并保留错误块、send完成、worker metadata及KV生命周期。",
+    "计算/控制分别记账会改变原来两者共用2名额的入场政策；若允许先计算批、控制批、下一计算批同时在途，总数可成为3，不能声称原总容量未变。",
+    "零token控制批可能仍搬运或持有资源；需要证明具体控制批的动作与退休条件，不能假退休或删除Future。",
+    "该方向不要求改D/Mooncake、17行兼容或DP/TP/PP/MTP，但尚未形成运行修复或收益验收。"
+  ],
+  "evidence_links": [
+    {
+      "title": "最终通知链与C1设备活动小结",
+      "path": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/notification/C4通知链与C1设备活动小结.md"
+    },
+    {
+      "title": "64条真实query与worker/core身份闭合",
+      "path": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/notification/c4-ready-query-chain.json"
+    },
+    {
+      "title": "当前方法隔离CPU验收及限制",
+      "path": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/notification/c4-carrier-cpu-receipt.json"
+    },
+    {
+      "title": "零token入场、覆盖边界与当前容量源码",
+      "path": "E:/work/ks/output/ks_rootcause_window_20261021/analysis/continuation_1730/notification/c4-zero-token-admissions.json"
+    }
+  ],
+  "verification": {
+    "framework_imports": false,
+    "NPU_used": false,
+    "remote_actions": false,
+    "runtime_source_changed": false,
+    "snippet_count": 6,
+    "excerpt_line_counts": [
+      {
+        "id": "device_ready",
+        "lines": 19
+      },
+      {
+        "id": "collect_ready",
+        "lines": 13
+      },
+      {
+        "id": "carrier",
+        "lines": 17
+      },
+      {
+        "id": "none_gate",
+        "lines": 15
+      },
+      {
+        "id": "allrank_receive",
+        "lines": 19
+      },
+      {
+        "id": "core_wait",
+        "lines": 15
+      }
+    ],
+    "fragments_equal_archived_current_source": true,
+    "key_lines_located_in_actual_fragments": true
+  }
+}

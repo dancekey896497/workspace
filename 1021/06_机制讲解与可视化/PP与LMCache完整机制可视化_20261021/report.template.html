@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>PP与LMCache：从一次请求读懂性能变化</title>
+<style>__REPORT_CSS__</style>
+</head>
+<body>
+<a class="skip" href="#main">跳到正文</a>
+<header class="topbar"><a class="brand" href="#overview">KS · 推理性能学习报告</a><span>证据截至 2026.10.21 · 18:15</span><a href="../../04_PP1%E4%B8%8EPP2%E6%9C%BA%E5%88%B6%E5%AF%B9%E7%85%A7/PP1%E4%B8%8EPP2%E8%AE%BE%E5%A4%87%E5%85%B3%E9%94%AE%E8%B7%AF%E5%BE%84%E5%AE%9A%E4%BD%8D_20261021/%E7%BB%AD%E6%9F%A5%E6%8A%A5%E5%91%8A_%E6%88%AA%E8%87%B31815.md">完整分析底稿 ↗</a></header>
+<div class="layout">
+<nav class="nav" aria-label="报告章节"><p>沿着一个请求往下看</p>
+<a href="#overview">先读结论</a><a href="#map">01 先认识这套系统</a><a href="#flow">02 开与不开缓存</a><a href="#results">03 到底快了多少</a><a href="#attention">04 为什么省算比例不同</a><a href="#fixed">05 剩下的计算在做什么</a><a href="#notification">06 KV好了，为何还在等</a><a href="#restore">07 搬KV是不是变慢了</a><a href="#code">08 对上实际代码</a><a href="#next">09 能怎么改、缺什么证据</a><a href="#terms">术语与复现资料</a>
+<div class="nav-foot">阅读约15分钟<br>先看白话，再展开代码。<br>流程示意不按节点长度计时。</div></nav>
+<main id="main">
+<section id="overview" class="hero">
+<p class="eyebrow">从动作、依赖到源码 · 本地可交互报告</p>
+<h1>历史输入少算了，<br>为什么首个token没快那么多？</h1>
+<p class="lead">我们把P侧分成“取回历史KV”“计算这次仍需计算的token”“把结果与完成消息交回调度器”三条线。沿这三条线看，才能理解PP与LMCache如何相互影响。</p>
+<div class="hero-summary"><strong>当前解释有两部分。</strong><p>今天ON冷/热诊断中，PP2/CP布局处理完整输入的稀疏Attention本来就较快，这部分还能省下的设备时间较少；并发时，KV完成通知又与整批模型结果一起返回，可能挡住前段继续接下一条请求。</p><p class="small">前者有实测差异与源码模型支持，不代表全部TTFT都已解释；后者已由真实就绪观测、逐rank通知及核心计数闭合。具体可挽回多少TTFT，尚未验证。</p></div>
+<div class="hero-actions"><a class="button primary" href="#flow">从OFF / ON流程开始</a><a class="button" href="#notification">直接看已经抓到的阻塞</a></div>
+<div class="evidence-legend"><span class="badge fact">已观察事实</span><span class="badge source">源码支持的解释</span><span class="badge unknown">尚未验证</span><span class="badge historical">历史与形态差异</span></div>
+<p class="fine">这是已有实验与本地CPU分析的综合报告。本次制作没有启动推理、启停服务或实施新修复。KS-MEM-001保持OPEN。</p>
+</section>
+
+<section id="map"><p class="section-number">01 · 先认识这套系统</p><h2>P、D、PP、LMCache各管哪件事？</h2>
+<p>P读懂输入，D继续生成；PP把同一个P模型拆成前后两段。LMCache另存历史KV，帮助P少算重复输入。<strong>PP中间结果和历史KV，是两种不同的数据。</strong></p>
+<div class="topology" role="img" aria-label="代理把输入交给P；P含前41层和后37层，P侧LMCache缓存历史KV；P到D仍由Mooncake传KV，D生成后续token">
+<div class="top-row"><div class="box client">用户 / 压测端<small>输入文本 → 等首个输出</small></div><span class="h-arrow">→</span><div class="box proxy">代理<small>先调用P，再调用D</small></div></div>
+<div class="p-boundary"><div class="boundary-title">一个P实例 · DP1 / TP8 / PP2 · DSA CP=true</div><div class="stage-row"><div class="box stage"><b>前41层</b><small>PP前段 · 8张卡协作</small><div class="chips" aria-hidden="true">▦ ▦ ▦ ▦ ▦ ▦ ▦ ▦</div></div><div class="relay"><strong>中间激活 →</strong><small>本次token算到一半的结果<br>后37层要接着用</small></div><div class="box stage"><b>后37层</b><small>PP后段 · 另8张卡协作</small><div class="chips" aria-hidden="true">▦ ▦ ▦ ▦ ▦ ▦ ▦ ▦</div></div></div><div class="cache-lines">↑ 取回本段历史KV / 保存副本 ↓</div><div class="box cache"><b>LMCache · P侧CPU缓存</b><small>记录历史token在各层的K/V；通过LMCacheMP Connector接入</small></div></div>
+<div class="pd-route"><strong>原Mooncake路线 →</strong><small>D从P取得当前请求的KV；不是PP两段交接中间激活</small></div>
+<div class="box decode"><b>D · DP4 / TP4 / PP1</b><small>4个接口继续生成 · 本报告有效性能主线中D不接LMCache</small></div>
+</div>
+<div class="two"><div class="note"><h3>“MP”不是把模型再拆一次</h3><p>LMCache MP指缓存运行在独立进程里。模型worker通过消息和设备event与缓存协作，它不是PP，也不是P/D分离。</p></div><div class="note"><h3>“保存”也不等于“卸载”</h3><p>STORE把KV副本交给缓存，不自动删除当前NPU上的KV。不能从“保存、读取”两个词推断KV在被反复赶出显存。</p></div></div>
+<div class="note"><h3>读代码前，先认识三种“工作人员”</h3><p><strong>调度核心：</strong>维护请求进度，决定下一批能算谁。<strong>模型worker：</strong>本例共16个进程，每个负责一张卡上的模型分片；rank是这些worker的编号。<strong>缓存进程：</strong>管理CPU中的KV，响应worker的保存与恢复请求。设备event像“这次设备任务已完成”的标志，future是等待某个结果的对象，MQ是进程间传消息的队列。</p></div>
+<details><summary>展开：我们实际比较的计算形态，以及哪些历史结果不能混用</summary><div class="table-wrap"><table><thead><tr><th>项目</th><th>PP2主线，各自OFF / ON</th><th>PP1辅助对照，各自OFF / ON</th></tr></thead><tbody><tr><th>P形态</th><td>DP1 / TP8 / PP2，主模型41/37层</td><td>DP1 / TP16 / PP1</td></tr><tr><th>P的DSA CP</th><td>true</td><td>false</td></tr><tr><th>D形态 / MTP</th><td colspan="2">D保持DP4 / TP4 / PP1；MTP3保留；D的peer描述随P匹配</td></tr><tr><th>ON缓存路线</th><td colspan="2">P：MultiConnector[Mooncake, LMCacheMP]；P→D仍Mooncake；12GiB CPU缓存、单处理worker</td></tr><tr><th>接入代码</th><td colspan="2">既有获批17行兼容适配、一行block-ID索引pin及当轮观测；这些不代表本次又应用新补丁</td></tr><tr><th>对比限制</th><td colspan="2">两形态同为16张P卡预算，但TP、CP及历史机器/观测条件不同，跨组不是纯PP实验。</td></tr></tbody></table></div><p class="fine">早期“D也改成TP8/PP2、MTP关闭、39/39分层”的成功ON，只能证明那套接入运行过，不纳入这里的性能归因。双侧MP在原形态下D全量重算，也不作为有效KV复用成功。</p></details>
+</section>
+
+<section id="flow"><p class="section-number">02 · 沿一个输入看动作变化</p><h2>不开缓存要做什么？命中缓存后少了什么？</h2>
+<fieldset class="scenario"><legend>选择教学情景 · 输入4096 token</legend><label><input type="radio" name="hit" value="full" checked> 完整命中</label><label><input type="radio" name="hit" value="partial"> 命中前2048 token</label><label><input type="radio" name="hit" value="miss"> 未命中</label><p id="scenario-copy"></p></fieldset>
+<div class="flow-controls"><div><button id="flow-prev" type="button">← 上一步</button><button id="flow-next" type="button">下一步 →</button></div><span id="flow-count" aria-live="polite"></span><span class="fine">点击任一步查看中文与代码对应</span></div>
+<div class="flow-layout"><div class="flow-pair"><article class="flow-column"><h3>OFF · P不使用LMCache</h3><div id="flow-off"></div></article><article class="flow-column"><h3>ON · P侧使用LMCache</h3><div id="flow-on"></div></article></div><aside id="flow-explanation" class="flow-detail" aria-live="polite"></aside></div>
+<div class="callout"><h3>完整命中，为什么还算最后1个输入token？</h3><p>KV保存的是Attention需要的历史上下文，通常没有保存本次输出所需的最终隐藏状态与词表分数（logits）。当前调度器保留最后1个输入token，让它重新经过模型各层、读取历史KV并得到输出分数。PP2下，这1个token仍要先经过41层，再经过37层。</p><p>因此，少算的是几千个历史token的工作量；模型层数、每层发起调用、PP交接和输出处理不会一起消失。MTP相关流程也仍按既有配置执行。</p></div>
+<p class="fine">本节是教学动作示意；50%是构造例，不是这轮实际命中率。节点高度与点击间隔不代表毫秒。冷ON仍有lookup/STORE，不能当作真正OFF。</p>
+</section>
+
+<section id="results"><p class="section-number">03 · 先确认现象与测量范围</p><h2>正式结果：4K四并发的ON接近，OFF差距更大</h2><p>先看最有辨识力的4K四并发：两形态的ON查找均全命中。延迟按<strong>同输入、两边共同成功的请求</strong>比较，避免把失败的零值算成加速。切换到其他档位后，请按实际数值判断，不能沿用“ON接近”。</p>
+<div class="metrics-toolbar"><label>原三档用例 <select id="tier-select"><option value="1">4K输入 · 256输出 · 四并发</option><option value="0">4K输入 · 256输出 · 单并发</option><option value="2">8K输入 · 256输出 · 单并发</option></select></label><label>图中指标 <select id="metric-select"><option value="ttft">平均TTFT（毫秒）</option><option value="tpot">平均TPOT（毫秒）</option><option value="e2el">平均端到端耗时（秒）</option></select></label></div>
+<div id="metric-chart" class="chart-box" aria-live="polite"></div><p id="metric-caption" class="fine"></p>
+<div class="table-wrap"><table id="metric-matrix" class="metric-matrix"></table></div><p id="matrix-note" class="fine"></p>
+<div class="two"><div class="note"><h3>TTFT不是纯Prefill算时</h3><p>客户端TTFT从发请求到首个实际输出，包含代理、排队、P、KV交接及D首输出。它快慢不能全部记在P的Attention上。</p></div><div class="note"><h3>TPOT和“首token后耗时”也不是纯D算时</h3><p>TPOT是后续输出token的平均间隔。端到端减TTFT只能叫客户端首token后耗时，仍可能有等待和传输；没有相同边界实测的Prefill/Decode会明确标缺失。</p></div></div>
+<details><summary>展开：样本、失败、命中率与今天诊断的边界</summary><div id="result-method"></div></details>
+</section>
+
+<section id="attention"><p class="section-number">04 · 第一条解释：原本能省掉的计算不同</p><h2>同一个Attention kernel，为什么完整输入能差很多？</h2><p>今天的设备profile把历史省算差异继续向下拆到了稀疏Attention（SFA）。PP1与PP2冷8K运行的是同名kernel、同一模板1158；在同名同模板下，源码模型把差异主要指向<strong>工作分配与复用方式</strong>。这还不是独立干预后的因果验收。</p>
+<div class="note"><h3>这张图中的三个词</h3><p><strong>query：</strong>当前token拿来查询历史上下文的表示；这里按要处理的query条数记工作。<strong>heads：</strong>同一个token的多组注意力视角，可以复用一部分历史KV准备结果。<strong>kernel：</strong>在NPU执行的一段算子程序；名字相同，输入组织和每卡工作分配仍可能不同。</p><p>“准备KV”包括按索引取出需要的历史行、聚合、反量化等动作。可以把下面的区别理解成：同一份材料准备好后，是只供4个视角使用，还是供64个视角使用。</p></div>
+<div class="work-model"><article><span class="badge source">完整冷输入下的源码模型</span><h3>PP1 · TP16 · CP=false</h3><div class="shape"><b>8192</b><span>query / 卡</span><i>×</i><b>4</b><span>heads / query</span></div><div class="prep-grid many" aria-hidden="true"></div><p>把heads分得很细。更多卡要为同一批query各自做KV索引、聚合和反量化；每次准备只服务较少heads。</p></article><article><span class="badge source">完整冷输入下的源码模型</span><h3>PP2 · TP8 · CP=true</h3><div class="shape"><b>1024</b><span>query / 卡</span><i>×</i><b>64</b><span>heads / query</span></div><div class="prep-grid fewer" aria-hidden="true"></div><p>把query分给不同卡。每卡准备的query较少，一次准备的KV能供更多heads使用；小矩阵的执行形态也变了。</p></article></div>
+<div class="callout"><h3>更快，不等于少做了相同比例的数学运算</h3><p>按完整一层、所有参与卡合计，两种布局的理论Attention算术配对数可以相同。但KV准备在哪些卡重复、每次准备能被多少heads使用、矩阵有没有填满，会改变执行成本。</p><p>安装源码还显示：4-head布局会把矩阵行补到16，并进入部分小矩阵流水同步分支；64-head完整tile通常不走该分支。<strong>这是源码解释，不是实测指令计数；不能据此直接删同步代码。</strong></p></div>
+<div id="sfa-chart" class="chart-box"></div><p class="fine">图中仅为同类SFA单次设备执行，不是整个Prefill、整张卡利用率或客户端TTFT。PP2取冷8K重负载rank，避免只挑最快卡；不同rank的时间不能相加。</p>
+<div class="two"><div class="note"><h3>目前模型解释到哪一步</h3><p>限定PP1冷8K rank0与PP2冷8K rank7：每卡最重AIC核组的query/KV静态工作量比约7.95；单层SFA设备中位耗时21.108/3.143≈6.72倍。两者残差(6.72/7.95−1)约−15.56%，没有拟合掉。它支持准备复用与工作分配方向，不是整请求耗时比。</p></div><div class="note"><h3>还缺什么</h3><p>动态实际长度、索引值、真实HBM/L2流量、源码到设备对象的构建对应，以及独立干预，仍不足。物理张量形状不等于每次有效计算长度。</p></div></div>
+<p class="source-line">证据：<a href="../../04_PP1%E4%B8%8EPP2%E6%9C%BA%E5%88%B6%E5%AF%B9%E7%85%A7/PP1%E4%B8%8EPP2%E8%AE%BE%E5%A4%87%E5%85%B3%E9%94%AE%E8%B7%AF%E5%BE%84%E5%AE%9A%E4%BD%8D_20261021/analysis/continuation_1730/sfa/SFA%E6%9C%BA%E5%88%B6%E8%AF%81%E6%8D%AE%E4%B8%8E%E5%8F%AF%E8%AF%81%E4%BC%AA%E9%A2%84%E6%B5%8B.md">SFA机制报告</a> · <a href="../../04_PP1%E4%B8%8EPP2%E6%9C%BA%E5%88%B6%E5%AF%B9%E7%85%A7/PP1%E4%B8%8EPP2%E8%AE%BE%E5%A4%87%E5%85%B3%E9%94%AE%E8%B7%AF%E5%BE%84%E5%AE%9A%E4%BD%8D_20261021/analysis/continuation_1730/sfa/runtime_kernel_identity_audit.json">实际kernel身份</a>。</p>
+</section>
+
+<section id="fixed"><p class="section-number">05 · 两种形态都保留的成本</p><h2>设备少算了，主机发起计算的动作还在</h2><div class="two"><div class="note"><h3>主机：不断发起工作</h3><p>逐层准备张量、量化/路由参数、调用PyTorch/CANN、提交任务和协作事件。输入变成1 token，调用模型78层这件事仍存在。</p></div><div class="note"><h3>设备：稍后真正执行</h3><p>主机可以先把许多任务排进去，然后才在结果完成处等设备。前面函数返回早，不意味着NPU工作已经结束。</p></div></div>
+<div class="async-example"><div><b>PP1 · 冷8K</b><span>主机forward窗口约417ms</span><span class="device-time">主模型SFA设备工作约1646ms</span></div><div><b>PP1 · 热8K</b><span>主机forward窗口约415ms</span><span class="device-time short">主模型SFA设备工作约6.9ms</span></div></div>
+<p class="fine">两个不同测量范围，只用于理解异步：不能把417ms与1646ms直接相加。冷输入的剩余设备执行，会在后续结果/采样等待中体现。今天都是ON冷/热，不是真OFF / ON。</p>
+<div class="callout"><h3>所以，“forward函数没变短”不等于“缓存没省计算”</h3><p>PP1的冷/热主模型都保留4608条队列记录，其中1364条是record / wait / destroy事件控制，并非4608个计算kernel。PP2不激活CANN采集时，每段热forward仍约160–190ms，覆盖区间主线程实际CPU执行接近墙钟。</p><p>这支持固定软件准备和推进动作仍然很重，削弱“主线程只是睡着等KV”的解释。纯Python、运行时忙轮询与入队背压各占多少，尚未拆清。</p></div>
+<details><summary>观测本身会不会造成全部慢？CPU绑定失败呢？</summary><p>一次模型forward内部通常只有4或6条顶层JSON观测，没有按41层逐层写大量日志；多出的少数行已确认来自其他线程ping。现有边界与helper重放不支持“逐层日志堆出183ms”，但没有同条件关闭KS观测的业务对照，观测贡献不能记作零。</p><p>CANN采集确实会拉长部分热forward，因此本轮另收了无CANN重复；它们仍有较高CPU执行。CPU绑定失败、迁移和抢占仍是候选影响因素，但目前没有证据把它们定为主因；schedstats关闭，也不能拿零值当没有排队。</p><p>16个模型worker是16个进程，不能套用“缓存进程16线程共用一把日志锁”的重放结果。</p></details>
+<p class="source-line">证据：<a href="../../04_PP1%E4%B8%8EPP2%E6%9C%BA%E5%88%B6%E5%AF%B9%E7%85%A7/PP1%E4%B8%8EPP2%E8%AE%BE%E5%A4%87%E5%85%B3%E9%94%AE%E8%B7%AF%E5%BE%84%E5%AE%9A%E4%BD%8D_20261021/analysis/continuation_1730/host/%E6%97%A0CANN%E7%83%ADforward_%E4%B8%BB%E6%9C%BA%E6%89%A7%E8%A1%8C%E6%9C%BA%E5%88%B6%E5%88%86%E6%9E%90.md">主机执行机制</a> · <a href="../../04_PP1%E4%B8%8EPP2%E6%9C%BA%E5%88%B6%E5%AF%B9%E7%85%A7/PP1%E4%B8%8EPP2%E8%AE%BE%E5%A4%87%E5%85%B3%E9%94%AE%E8%B7%AF%E5%BE%84%E5%AE%9A%E4%BD%8D_20261021/analysis/pp1/queue/sfa-device-findings.md">324条提交到设备的精确关联</a>。</p>
+</section>
+
+<section id="notification"><p class="section-number">06 · 第二条解释：通知延后，可能压缩流水重叠机会</p><h2>KV已经可以用了，为什么下一条请求仍没有进入前41层？</h2><p>这次四并发中，一个请求先获得计算机会，其他请求同时恢复历史KV。恢复好的请求，需要把<strong>16个rank都已完成</strong>这件事告诉调度中枢，才能继续计算。</p>
+<div class="time-toolbar"><label>逐步看实际时间线 <input id="timeline-step" type="range" min="0" max="5" value="0" aria-label="时间线步骤"></label><div id="timeline-buttons"></div></div>
+<div id="timeline-chart" class="timeline-scroll"></div><div id="timeline-explain" class="timeline-explain" aria-live="polite"></div>
+<div class="three"><div class="finding"><span class="badge fact">64条真实query就绪观测</span><h3>设备就绪已被看到</h3><p>4请求×16rank均有非空设备event，query返回ready=true；future与原提交身份逐条匹配，不只是RPC ACK。首次观察ready是设备完成时刻的上界，不是DMA精确终点。</p></div><div class="finding"><span class="badge fact">两条请求的前段</span><h3>worker报得很快，核心收得晚</h3><p>query→worker上报约0.63–1.36ms；同rank query→核心计数却约218–240ms。大段延迟在设备ready已被观察之后。</p></div><div class="finding"><span class="badge source">已对上当前源码</span><h3>通知搭着整批模型结果返回</h3><p>前段已有KV完成载荷，但后段execute暂时返回空；聚合器先看指定输出rank，等后续sample结果才补齐通知。</p></div></div>
+<div class="callout"><h3>PP相关的是“可能压缩流水重叠”，并非PP2才开始有完成通知</h3><p>PP1也需要恢复KV、计算末token、等待输出；PP2额外具备“前段接下一条，后段处理上一条”的机会。控制信息却被整批结果绑住时，前段即使已完成当前工作，也可能接不到下一条请求。</p><p>已有单并发profile提供旁证：后段推进的约299ms期间，前段两个采样worker导出的设备时间线没有任务区间记录。它不是四并发同轮证据，也不能写成整张NPU空闲；其他进程的任务可能不在该worker导出里。</p></div>
+<details><summary>为什么不能直接说“可以省218–240ms”？零token批是什么？</summary><p>目前缺同批响应MQ实际入队与核心读取时刻。369ms的worker方法返回，只证明载荷构造完；后面还可能有输出线程和队列。因此，不能把通知延迟直接当作可回收收益。</p><p>等待KV时，框架还会派发零token控制批来推进传输状态。已保留摘录中，正计算批入队前有68次零token入场；正批入队后、首次forward之前，另1个与正批共同占用2个在途名额。这69次都早于首次forward，不等于69次模型计算或69次重复READ。元数据不足以把全部零批称为纯轮询。</p><p>即使通知提前到中枢，若计算批与控制批仍占满名额，也不能直接派下一批。候选修复需要同时处理通知、核心等待和在途记账。</p></details>
+<p class="source-line">证据：<a href="../../04_PP1%E4%B8%8EPP2%E6%9C%BA%E5%88%B6%E5%AF%B9%E7%85%A7/PP1%E4%B8%8EPP2%E8%AE%BE%E5%A4%87%E5%85%B3%E9%94%AE%E8%B7%AF%E5%BE%84%E5%AE%9A%E4%BD%8D_20261021/analysis/continuation_1730/notification/C4%E9%80%9A%E7%9F%A5%E9%93%BE%E4%B8%8EC1%E8%AE%BE%E5%A4%87%E6%B4%BB%E5%8A%A8%E5%B0%8F%E7%BB%93.md">最终通知链小结</a> · <a href="../../04_PP1%E4%B8%8EPP2%E6%9C%BA%E5%88%B6%E5%AF%B9%E7%85%A7/PP1%E4%B8%8EPP2%E8%AE%BE%E5%A4%87%E5%85%B3%E9%94%AE%E8%B7%AF%E5%BE%84%E5%AE%9A%E4%BD%8D_20261021/analysis/continuation_1730/notification/c4-ready-query-chain.json">64条逐rank配对</a>。</p>
+</section>
+
+<section id="restore"><p class="section-number">07 · 把数据搬运与固定动作分开</p><h2>没有看到反复全量READ；但数据减半，控制动作没减半</h2><div id="restore-chart" class="chart-box"></div><div class="table-wrap"><table id="restore-table"></table></div>
+<div class="two"><div class="note"><h3>为什么字节少了，耗时没有减半？</h3><p>一份READ仍要登记对象、导入event、准备block-ID索引、分块提交、记录/导出完成event以及释放回调。数量不变的协议与控制动作，不会按KV字节同比缩小。</p></div><div class="note"><h3>为什么四并发更容易等？</h3><p>单请求自己的handler服务占用约51–90ms，但从第一份进入到最后一份退出约153–160ms。中间有其他请求和处理间隙，不能把这段全算作它自己的DMA。</p></div></div>
+<div class="callout"><h3>“一次READ里分了几块”与“同一份KV读了几遍”不同</h3><p>4K按512-token对象分成8个对象，当前每次native计划处理4个对象，所以一份READ有2次native提交；8K相应为4次。每请求每rank仍只有一次retrieve提交。前后PP段、不同TP rank各自恢复自己的缓存份额，也不等于重复恢复整个模型。</p><p>这里的字节数是native尝试计划，不是实测DMA字节或带宽。逐字节唯一性尚未验证，不能扩大为“内部任何层面都绝无重复”。</p></div>
+<details><summary>16线程、pinned-memory与完成callback，分别说明什么？</summary><p>把处理线程从1改到16是一次独立实验，不是PP或LMCache自动加到16。已细查的两条4K单并发全命中请求，恢复与推进均值由86.102ms增至121.354ms；它们排队变少，但请求窗口反而变长，不代表每份READ都变慢，也非整档均值。真实helper的CPU重放说明共享日志锁/线程交错可能放大墙钟，但不能把重放毫秒数直接从业务耗时扣掉。</p><p>一行pin补丁针对CPU侧block-ID索引表，4K约256B、8K约512B；它不等于把全部KV payload改成pinned memory。</p><p>生产者event释放callback已能严格关联224/224份READ，证明释放回调发生，不代表后续H2D完成。部分finish-read callback缺少身份，仍标未知，没有据此认定未执行或泄漏。</p></details>
+<p class="source-line">证据：<a href="../../04_PP1%E4%B8%8EPP2%E6%9C%BA%E5%88%B6%E5%AF%B9%E7%85%A7/PP1%E4%B8%8EPP2%E8%AE%BE%E5%A4%87%E5%85%B3%E9%94%AE%E8%B7%AF%E5%BE%84%E5%AE%9A%E4%BD%8D_20261021/analysis/continuation_1730/cache/KV%E6%81%A2%E5%A4%8D_PP1_PP2_%E6%9C%BA%E5%88%B6%E6%AF%94%E8%BE%83.md">KV恢复机制比较</a> · <a href="../../04_PP1%E4%B8%8EPP2%E6%9C%BA%E5%88%B6%E5%AF%B9%E7%85%A7/PP1%E4%B8%8EPP2%E8%AE%BE%E5%A4%87%E5%85%B3%E9%94%AE%E8%B7%AF%E5%BE%84%E5%AE%9A%E4%BD%8D_20261021/analysis/continuation_1730/cache/restore-partition-totals.json">主机分区统计</a>。</p>
+</section>
+
+<section id="code"><p class="section-number">08 · 白话与实际函数一一对应</p><h2>只读几段关键代码，就能看见这条依赖</h2><p>下面是当前安装版本的源码摘录，保留原函数名与原行号。省略处会明确标出；中文解释不假装是原代码。<strong>这些片段用于理解，不能单独复制成修复。</strong></p>
+<details><summary>先分清：已用的17行接入适配，与尚未应用的性能方案</summary><p>17行让P本地LMCache与原Mooncake共存，不负责解除本报告的通知等待。2026-10-16完整80/80跑通还包含另获批的P allocator配置，不能全归功于17行；这是历史接入验收，不是本页19/20日正式性能表的同一轮。</p><div class="table-wrap"><table><thead><tr><th>改动</th><th>实际做什么</th><th>没有做什么</th></tr></thead><tbody><tr><th>10行PP握手方法</th><td>LMCacheMPConnector明确接收并忽略自己不消费的PD peer握手。MultiConnector仍将完整握手交给Mooncake；本地缓存使用自己的IPC注册。</td><td>没有让LMCache支持跨PP P2P或转换不同TP/PP的KV布局。</td></tr><tr><th>7行cold STORE补充</th><td>tracker没有blocks而调度器已分配时，补入真实block IDs，让未被选中负责LOAD的缓存写入方仍能保存冷请求KV。来自当时未合入的PR5474固定版本，用户已明确批准。</td><td>没有改模型层、KV内容或采样规则。</td></tr><tr><th>另外的P allocator=False</th><td>改变P侧NPU内存分配配置，作为独立接入调整避开当轮IPC报错。</td><td>不是17行代码的一部分，也不等于507899底层根因已完全定位。</td></tr><tr><th>另外的一行pin</th><td>固定CPU侧block-ID索引源内存，后续性能实验单独获批。</td><td>不是把全部KV转成pinned payload。</td></tr><tr><th>本报告的通知解耦</th><td>只有隔离设计与CPU边界验证，运行源码尚未应用。</td><td>不能当作17行已经解决的内容或已兑现的提速。</td></tr></tbody></table></div><p class="fine">以下为原始diff正文，不是新补丁授权。归档文件头的DRAFT / NOT_APPLIED保留的是当时审阅状态；后续恢复应用有独立回执。</p><pre class="pseudo">__APPROVED_PATCH__</pre><p class="source-line"><a href="../../../02_%E9%83%A8%E7%BD%B2%E5%9F%BA%E7%BA%BF%E4%B8%8E%E6%8E%A5%E5%85%A5%E6%89%93%E9%80%9A/03_%E6%88%90%E5%8A%9FON%E4%B8%8E%E5%A4%8D%E7%8E%B0%E9%85%8D%E7%BD%AE/%E5%8E%9F%E5%BD%A2%E6%80%81P%E4%BE%A7%E6%8E%A5%E5%85%A5%E6%89%93%E9%80%9A_20261016/patched17-validation-20261016/p/approved17.patch">原始17行diff</a> · <a href="../../../02_%E9%83%A8%E7%BD%B2%E5%9F%BA%E7%BA%BF%E4%B8%8E%E6%8E%A5%E5%85%A5%E6%89%93%E9%80%9A/03_%E6%88%90%E5%8A%9FON%E4%B8%8E%E5%A4%8D%E7%8E%B0%E9%85%8D%E7%BD%AE/%E5%8E%9F%E5%BD%A2%E6%80%81P%E4%BE%A7%E6%8E%A5%E5%85%A5%E6%89%93%E9%80%9A_20261016/dual-mp-retry-20261016/p-local-false-candidate/p-switch.json">实际恢复应用回执</a> · <a href="../../../02_%E9%83%A8%E7%BD%B2%E5%9F%BA%E7%BA%BF%E4%B8%8E%E6%8E%A5%E5%85%A5%E6%89%93%E9%80%9A/03_%E6%88%90%E5%8A%9FON%E4%B8%8E%E5%A4%8D%E7%8E%B0%E9%85%8D%E7%BD%AE/%E5%8E%9F%E5%BD%A2%E6%80%81P%E4%BE%A7%E6%8E%A5%E5%85%A5%E6%89%93%E9%80%9A_20261016/MultiConnector_17%E8%A1%8C_PallocatorFalse_%E6%89%A7%E8%A1%8C%E4%B8%8E%E7%BB%93%E6%9E%9C.md">16日完整执行与结果</a>。</p><p class="fine">80/80在该轮指HTTP与256输出计数完成，D有真实外部KV消费；它不替代内容一致性或无损KV验收。</p></details>
+<div class="code-browser"><div id="code-tabs" class="code-tabs" role="group" aria-label="代码片段"></div><div id="code-content"></div></div>
+<details><summary>另看：当前流程与候选解耦的教学伪代码</summary><div class="notice-unknown">教学伪代码 · 非当前完整源码 · 非可执行补丁 · 候选方案未应用</div><div id="pseudo-code" class="two"></div></details>
+</section>
+
+<section id="next"><p class="section-number">09 · 结论不止“哪里慢”，还要能指导修改</p><h2>该改的是通知推进；仍要守住哪些依赖？</h2>
+<div class="decision-grid"><article><span class="badge fact">已确认</span><h3>通知晚于已观察的设备就绪</h3><p>前段载荷依附整批结果；样本中的218–240ms发生在ready之后。这些同请求、同rank的通知滞后，不能归为该恢复任务仍未完成搬运。</p></article><article><span class="badge source">源码解释</span><h3>原本Attention更快，省算基数更小</h3><p>query分配、KV准备复用与矩阵形态支持现有差异；这部分仍缺独立干预与动态参数。</p></article><article><span class="badge unknown">尚未验证</span><h3>具体能省多少TTFT</h3><p>MQ分段、合法提前派批、生命周期与实际收益未验收。不能从通知延迟直接承诺净收益。</p></article></div>
+<ol class="next-steps"><li><strong>让完成控制记录提前交给中枢。</strong>复用前段已有响应；本例后段8份早已计数，不必先新建全套后段通知通道。</li><li><strong>让中枢有机会处理它。</strong>单加收件箱无效：若仍阻塞在整批future.result，调度器仍无法推进。响应MQ保持单读者，模型结果顺序保留。</li><li><strong>在计数前去重，并处理在途名额。</strong>后续sample会镜像同一份KV通知；仅移动空结果判断会留下残余计数，CPU负例已复现。零token批也不能随意删除或假装不占资源。</li><li><strong>最小补采集只补缺口。</strong>同command逐rank记录响应MQ入队完成、核心读取完成、所带请求ID和在途账本；再决定是否需要追输出线程。无需先改DP/TP/PP、MTP或重跑整套已有OFF。</li></ol>
+<div class="note"><h3>哪些不应承诺</h3><p>控制批另计账可能把原总在途2改为3，这是新调度策略，安全性与收益尚未验证。当前V1/PP2容量仍是2，关闭async scheduling不能独立解除通知门禁。通知解耦主要争取并发时下一请求提前进入前段，不能跳过同一个token的41层→37层依赖。</p></div>
+<div class="scope-strip">方案状态：DESIGN_ONLY / DRAFT_NOT_APPLIED。CPU验收证明计数与有限控制流边界，不代表NPU生命周期、生产正确性或真实提速。</div>
+</section>
+
+<section id="terms"><p class="section-number">查阅区 · 不熟的词和完整复现资料</p><h2>术语、基准命令与证据分级</h2><details><summary>常用术语：按本项目的具体含义解释</summary><div id="glossary-list"></div></details><details><summary>完整归档原生启动命令：P ON / OFF、缓存与D</summary><p class="fine">下面是已有实验的归档复现资料，不会自动执行。命令与代码适配、模型路径及观测环境要成套理解；教学流程图不是启动参数模板。</p><div id="baseline-commands"></div></details>
+<details><summary>哪些结论已经过时或需要更正？</summary><div class="table-wrap"><table><thead><tr><th>旧说法或混淆</th><th>本轮证据后的说法</th></tr></thead><tbody><tr><td>后37层READ必然晚160–209ms</td><td>本轮单/四并发未复现；218–240ms是ready之后的通知等待，两个时间段不能混用。</td></tr><tr><td>核心在等无关旧批</td><td>execute/sample属于同一个先计算批；其他请求的KV通知搭载在它上面。</td></tr><tr><td>不同compiled kernel导致Attention差异</td><td>已核对冷8K同完整kernel名与模板；同模板内部工作和效率仍能不同。</td></tr><tr><td>PP2总在反复卸载、加载KV</td><td>当前热请求每rank一次READ；分片、分块和STORE副本不能直接作为重复全量搬运证据。</td></tr><tr><td>冷ON可以充当OFF，或跨形态都算PP效应</td><td>冷ON仍有缓存路径；历史真OFF单独保留。跨PP1/PP2还变TP、CP及环境条件。</td></tr></tbody></table></div></details>
+<div class="sources"><h3>进一步查看</h3><a href="../../04_PP1%E4%B8%8EPP2%E6%9C%BA%E5%88%B6%E5%AF%B9%E7%85%A7/PP1%E4%B8%8EPP2%E8%AE%BE%E5%A4%87%E5%85%B3%E9%94%AE%E8%B7%AF%E5%BE%84%E5%AE%9A%E4%BD%8D_20261021/%E7%BB%AD%E6%9F%A5%E6%8A%A5%E5%91%8A_%E6%88%AA%E8%87%B31815.md">18:15综合底稿</a><a href="../../04_PP1%E4%B8%8EPP2%E6%9C%BA%E5%88%B6%E5%AF%B9%E7%85%A7/PP1%E4%B8%8EPP2%E8%AE%BE%E5%A4%87%E5%85%B3%E9%94%AE%E8%B7%AF%E5%BE%84%E5%AE%9A%E4%BD%8D_20261021/analysis/continuation_1730/README.md">原始资料—分析数据—报告索引</a><a href="../../05_%E6%B5%8B%E8%AF%95%E7%BB%93%E6%9E%9C%E4%B8%8E%E6%B1%87%E6%80%BB%E6%8A%A5%E5%91%8A/%E6%B5%8B%E8%AF%95%E7%BB%93%E6%9E%9C%E4%B8%8E%E6%8C%87%E6%A0%87%E5%AF%B9%E6%AF%94%E6%8A%A5%E5%91%8A_20261021/%E6%B5%8B%E8%AF%95%E7%BB%93%E6%9E%9C%E6%8A%A5%E5%91%8A.html">此前完整测试结果报告</a><a href="report-data.json">本页实际数据</a><a href="source_code.json">本页代码依据</a><a href="evidence_notes.md">数据测量范围</a></div>
+</section>
+<footer>只保留文字、源码与日志引用，不含聊天原图。网页不连接服务器或控制任何服务。历史结果不代表当前服务实时状态。<br>KS-MEM-001（PP / DSA CP下的权重分配、加载峰值与显存容量差异）仍OPEN；本次性能分析没有将该内存问题结案。</footer>
+</main></div>
+<div id="copy-status" class="sr-only" role="status" aria-live="polite"></div>
+<script id="report-data" type="application/json">__REPORT_DATA__</script>
+<script id="source-data" type="application/json">__SOURCE_DATA__</script>
+<script id="commands-data" type="application/json">__COMMANDS_DATA__</script>
+<script id="glossary-data" type="application/json">__GLOSSARY_DATA__</script>
+<script>__REPORT_JS__</script>
+</body></html>

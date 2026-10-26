@@ -3,8 +3,15 @@
   "file": "E:\\work\\ks\\output\\03_性能劣化原因分析\\06_机制讲解与可视化\\pp_lmcache_one_diagram.html",
   "hidden": false,
   "url_has_fragment": false,
-  "embedded_image_loaded": true,
-  "image_width": 3400,
-  "image_height": 6360,
+  "layout": {
+    "title": "纵向时间轴：前后段worker谁在算、谁在等",
+    "svgCount": 1,
+    "textCount": 71,
+    "overflow": [],
+    "overlap": [],
+    "pageOverflow": false,
+    "externalRequests": 0
+  },
+  "missing_links": [],
   "screenshot_saved": false
 }

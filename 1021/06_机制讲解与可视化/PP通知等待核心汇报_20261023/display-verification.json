@@ -1,0 +1,13 @@
+{
+  "status": "PASS_BROWSER_RENDER_AND_TIMELINE_INIT",
+  "views": [
+    {
+      "view": "full",
+      "screenshot": "E:\\work\\ks\\output\\ks_pp_lmcache_report_20261023\\preview-full.png",
+      "timeline_buttons": 7,
+      "initial_state": "350.934 ms · KV好了"
+    }
+  ],
+  "NPU_used": false,
+  "services_changed": false
+}

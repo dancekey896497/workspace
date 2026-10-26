@@ -1,12 +1,12 @@
 # 机制讲解与可视化
 
-[返回本阶段](E:/work/ks/output/03_性能劣化原因分析/README.md)
+[返回本阶段](<../README.md>)
 
 |材料|种类|证据边界|入口|
 |---|---|---|---|
-|单张完整两请求时序图_可见入口|06_机制讲解与可视化|重用原有自制图；普通文件、内嵌图片，无锚点依赖；历史时间不作纯PP增量|[直接打开单图](E:/work/ks/output/03_性能劣化原因分析/06_机制讲解与可视化/pp_lmcache_one_diagram.html)|
-|批次与数据调度图解_20261026|06_机制讲解与可视化|分步区分调度安排、核心批记录、模型输入及状态交付；实测不等于纯PP增量|[打开图解](E:/work/ks/output/03_性能劣化原因分析/06_机制讲解与可视化/批次与数据调度_图解.html)|
-|PP与LMCache完整机制可视化_20261021|06_机制讲解与可视化|教学、源码与性能材料，候选伪代码不是已生效补丁|[读报告](E:/work/ks/output/ks_pp_lmcache_explained_20261021/PP与LMCache_机制可视化报告.html) · [完整资料](E:/work/ks/output/ks_pp_lmcache_explained_20261021)|
-|PP通知等待核心汇报_20261023|06_机制讲解与可视化|当前简洁机制入口；通知间隔不是相对PP1净新增耗时|[读报告](E:/work/ks/output/ks_pp_lmcache_report_20261023/pp_lmcache_core_report.html) · [完整资料](E:/work/ks/output/ks_pp_lmcache_report_20261023)|
-|两条请求执行时序图_HTML|06_机制讲解与可视化|自制机制图；不复制或恢复聊天原图|[读报告](E:/work/ks/output/pp_lmcache_sequence.html) · [完整资料](E:/work/ks/output/pp_lmcache_sequence.html)|
-|两条请求执行时序图_自制导出图|06_机制讲解与可视化|自制机制图；不复制或恢复聊天原图|[读报告](E:/work/ks/output/pp_lmcache_sequence.png) · [完整资料](E:/work/ks/output/pp_lmcache_sequence.png)|
+|单张完整两请求时序图_可见入口|06_机制讲解与可视化|重用原有自制图；普通文件、内嵌图片，无锚点依赖；历史时间不作纯PP增量|[直接打开单图](<pp_lmcache_one_diagram.html>)|
+|批次与数据调度图解_20261026|06_机制讲解与可视化|分步区分调度安排、核心批记录、模型输入及状态交付；实测不等于纯PP增量|[打开图解](<批次与数据调度_图解.html>)|
+|PP与LMCache完整机制可视化_20261021|06_机制讲解与可视化|教学、源码与性能材料，候选伪代码不是已生效补丁|[读报告](<PP与LMCache完整机制可视化_20261021/PP与LMCache_机制可视化报告.html>) · [完整资料](<PP与LMCache完整机制可视化_20261021>)|
+|PP通知等待核心汇报_20261023|06_机制讲解与可视化|当前简洁机制入口；通知间隔不是相对PP1净新增耗时|[读报告](<PP通知等待核心汇报_20261023/pp_lmcache_core_report.html>) · [完整资料](<PP通知等待核心汇报_20261023>)|
+|两条请求执行时序图_HTML|06_机制讲解与可视化|自制机制图；不复制或恢复聊天原图|[读报告](<pp_lmcache_sequence.html>) · [完整资料](<pp_lmcache_sequence.html>)|
+|两条请求执行时序图_自制导出图|06_机制讲解与可视化|自制机制图；不复制或恢复聊天原图|[读报告](<pp_lmcache_sequence.png>) · [完整资料](<pp_lmcache_sequence.png>)|

@@ -1,0 +1,238 @@
+{
+  "schema": "ks.explained.baseline_commands.v1",
+  "title": "PP2基准：已归档原生命令",
+  "generated_date": "2026-10-21",
+  "scope": "仅本地报告整理，所有命令均未执行；保留全部归档参数，不补造当前环境状态。",
+  "source_report": "E:\\work\\ks\\output\\ks_test_results_structured_20261021\\data\\report-data.json",
+  "source_json_key": "baseline_native_commands",
+  "source_notes": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\参数准备\\README.md",
+  "baseline_label": "2026-10-20 PP2 / P侧LMCache / 单处理线程基准",
+  "baseline_layout": {
+    "P": "DP1 / TP8 / PP2，目标模型41/37层，DSA CP=true，MTP3",
+    "D": "DP4 / TP4 / PP1，四个D接口，MTP3",
+    "cache": "仅P本地LMCache，12GiB，chunk512；P→D仍走Mooncake"
+  },
+  "comparison_boundary": "这些是20日归档PP2基准模板；21日的独立诊断存在额外观测。原始12日OFF、20日ON的机器/IP、allocator和观测并不完全一致，不能把两份归档命令直接当严格同条件测量。",
+  "reproduction_boundary": "serve一行不会自动安装LMCache、应用适配或建立环境；复现依赖已归档环境、模型、运行副本和独立缓存服务。下面的可复现状态是归档材料完整性，不是今天再次启动成功。",
+  "original_off_reference": {
+    "configuration_date": "2026-10-12",
+    "local_archive_date": "2026-10-15",
+    "original_container_source": "/root/ks-work/ks-direct/p1d1-pp2-port28000/20261012-213613-291546/start.sh",
+    "local_actual_start_script": "E:\\work\\ks\\output\\ks_migrate_m12_to_m8_20261015\\source-baseline-p-20261012-start.sh",
+    "parsed_evidence": "E:\\work\\ks\\output\\ks_lmcache_stage2_20261013\\baseline-cptrue-original-evidence\\p-source-and-results.json",
+    "original_d_launch": "E:\\work\\ks\\output\\ks_migrate_m12_to_m8_20261015\\source-baseline-d-20261012-launch.json"
+  },
+  "items": [
+    {
+      "id": "p_on",
+      "title": "P：接入LMCache的归档基准",
+      "role": "P",
+      "archive_date": "2026-10-20",
+      "host": "8",
+      "container": "ks-pp-luv-m8-priv",
+      "layout": "DP1 / TP8 / PP2；41/37；DSA CP=true；MTP3",
+      "source_path": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\参数准备\\p-m8-on.serve.native.sh",
+      "command": "vllm serve /mnt/sdb/models/GLM-5.1-w8a8c8-MTP \\\n  --host 0.0.0.0 \\\n  --port 18100 \\\n  --tensor-parallel-size 8 \\\n  --pipeline-parallel-size 2 \\\n  --enable-expert-parallel \\\n  --distributed-executor-backend mp \\\n  --master-addr 127.0.0.1 \\\n  --master-port 18190 \\\n  --nnodes 1 \\\n  --node-rank 0 \\\n  --hf-overrides '{\"use_index_cache\":true,\"index_topk_freq\":4}' \\\n  --speculative-config '{\"num_speculative_tokens\":3,\"method\":\"deepseek_mtp\",\"enforce_eager\":true}' \\\n  --seed 1024 \\\n  --served-model-name glm-5 \\\n  --max-model-len 16384 \\\n  --additional-config '{\"fuse_muls_add\":true,\"recompute_scheduler_enable\":false,\"multistream_overlap_shared_expert\":true,\"enable_dsa_cp\":true,\"enable_sparse_sfa_c8\":true,\"enable_sparse_li_c8\":true,\"c8_enable_reshape_optim\":true}' \\\n  --max-num-batched-tokens 16384 \\\n  --max-num-seqs 64 \\\n  --trust-remote-code \\\n  --no-enable-prefix-caching \\\n  --quantization ascend \\\n  --gpu-memory-utilization 0.92 \\\n  --enforce-eager \\\n  --enable-auto-tool-choice \\\n  --tool-call-parser glm47 \\\n  --reasoning-parser glm45 \\\n  --kv-transfer-config '{\"kv_role\":\"kv_producer\",\"kv_port\":\"28000\",\"engine_id\":\"ks-p-p1d1-pp2\",\"kv_connector\":\"MultiConnector\",\"kv_connector_extra_config\":{\"connectors\":[{\"kv_connector\":\"MooncakeConnectorV1\",\"kv_role\":\"kv_producer\",\"kv_port\":\"28000\",\"kv_connector_extra_config\":{\"use_ascend_direct\":true,\"prefill\":{\"dp_size\":1,\"tp_size\":8,\"pp_size\":2,\"pp_layer_partition\":\"41,37\"},\"decode\":{\"dp_size\":4,\"tp_size\":4,\"pp_size\":1}}},{\"kv_connector\":\"LMCacheMPConnector\",\"kv_role\":\"kv_producer\",\"kv_connector_module_path\":\"lmcache.integration.vllm.lmcache_mp_connector\",\"kv_connector_extra_config\":{\"lmcache.mp.host\":\"tcp://127.0.0.1\",\"lmcache.mp.port\":5565,\"lmcache.mp.autostart\":false,\"lmcache.mp.nonblocking_lookup_status\":false}}]}}'",
+      "environment_source": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\参数准备\\p-m8-common-env.native.sh",
+      "environment_text": "#!/usr/bin/env bash\nexport KS_TTFT_TRACE_DIR=/dev/shm/ks-ttft-prepare-20261020/runtime/traces\nexport KS_MP=/opt/ks-lmcache-stage2/official-mp-v0.5.6rc5\nexport KS_WORK_HOME=/dev/shm/ks-ttft-prepare-20261020/work/p/home\nexport HOME=\"$KS_WORK_HOME\"\nexport TMPDIR=/dev/shm/ks-ttft-prepare-20261020/tmp/p\nexport XDG_CACHE_HOME=/dev/shm/ks-ttft-prepare-20261020/work/p/cache\nexport PATH=\"$KS_MP/venv/bin:$PATH\"\nexport PYTHONPATH=\"/dev/shm/ks-ttft-prepare-20261020/runtime:$KS_MP/LMCache-Ascend-official-v0.5.6rc5:${PYTHONPATH:-}\"\nexport PYTHONDONTWRITEBYTECODE=1\nexport LMCACHE_TRACK_USAGE=false\nunset TORCH_DEVICE_BACKEND_AUTOLOAD LMCACHE_CONFIG_FILE\nexport ASCEND_RT_VISIBLE_DEVICES=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15\nexport PYTHONHASHSEED=0 TE_PARALLEL_COMPILER=1\nexport LD_LIBRARY_PATH=\"${LD_LIBRARY_PATH:-}:/usr/local/lib\"\nexport VLLM_ASCEND_ENABLE_FUSED_MC2=1 HCCL_OP_EXPANSION_MODE=AIV\nexport HCCL_IF_IP=192.168.0.110 HCCL_NPU_SOCKET_PORT_RANGE=auto\nexport GLOO_SOCKET_IFNAME=enp23s0f3 TP_SOCKET_IFNAME=enp23s0f3 HCCL_SOCKET_IFNAME=enp23s0f3\nexport OMP_PROC_BIND=false OMP_NUM_THREADS=1\nexport PYTORCH_NPU_ALLOC_CONF=expandable_segments:False HCCL_BUFFSIZE=400\nexport ACL_OP_INIT_MODE=1 ASCEND_A3_ENABLE=1 VLLM_ASCEND_ENABLE_FLASHCOMM1=1\nexport VLLM_PP_LAYER_PARTITION=41,37\nmkdir -p \"$KS_WORK_HOME\" \"$TMPDIR\" \"$XDG_CACHE_HOME\"\ncd /dev/shm/ks-ttft-prepare-20261020/work/p",
+      "full_start_script_source": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\参数准备\\start-p-m8-on.native.sh",
+      "readiness": "原生serve与环境脚本齐全；与报告归档命令逐字核对，未执行。",
+      "dependencies": [
+        {
+          "name": "17行兼容适配",
+          "status": "归档基准包含且P接入依赖",
+          "detail": "10行PP握手适配＋7行cold STORE fallback；未打适配的官方原版不能仅复制本命令就假定跑通。"
+        },
+        {
+          "name": "一行pin补丁",
+          "status": "归档基准包含",
+          "detail": "将block-ID CPU索引源pin住；它不是整块KV被pin，也不是所有接入都必须的参数。"
+        },
+        {
+          "name": "已有观测副本",
+          "status": "归档基准包含",
+          "detail": "PYTHONPATH优先使用/dev/shm/ks-ttft-prepare-20261020/runtime，其中带19日已批准的计时与关联观测；不是纯未观测运行。"
+        }
+      ],
+      "necessary_environment_facts": [
+        "VLLM_PP_LAYER_PARTITION=41,37",
+        "PYTORCH_NPU_ALLOC_CONF=expandable_segments:False",
+        "HCCL_IF_IP=192.168.0.110"
+      ],
+      "route": "P的MultiConnector同时接Mooncake与LMCacheMPConnector；缓存仅P侧，P→D仍走原Mooncake。"
+    },
+    {
+      "id": "p_off",
+      "title": "P：最原始不开LMCache的已跑通配置",
+      "role": "P",
+      "configuration_date": "2026-10-12",
+      "archive_date": "2026-10-15",
+      "host": "12",
+      "layout": "DP1 / TP8 / PP2；41/37；DSA CP=true；MTP3",
+      "source_path": "E:\\work\\ks\\output\\ks_migrate_m12_to_m8_20261015\\source-baseline-p-20261012-start.sh",
+      "command": null,
+      "command_status": "实际启动脚本已归档；其包含当时的检查与nohup包装，没有把它自行改写成新的原生启动稿。",
+      "native_display_reference": "E:\\work\\ks\\output\\ks_p_local_m12_m137_20261016\\ipc507899-review-20261016\\off-p.native.sh",
+      "native_display_status": "此原生展示稿文件明确标注not executed，只作阅读参考，不冒充实际复现验收。",
+      "readiness": "请查看实际启动脚本链接及原始来源；本报告未重跑OFF。",
+      "dependencies": [
+        {
+          "name": "LMCache / 17行适配",
+          "status": "不依赖",
+          "detail": "P只用MooncakeConnectorV1；原始OFF不接LMCache。"
+        },
+        {
+          "name": "pin / KS细观测",
+          "status": "原始配置不包含",
+          "detail": "不能用后续ON的补丁及观测状态覆盖原始OFF档案。"
+        }
+      ],
+      "necessary_environment_facts": [
+        "VLLM_PP_LAYER_PARTITION=41,37",
+        "PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
+        "HCCL_IF_IP=192.168.0.50"
+      ],
+      "route": "P的MooncakeConnectorV1 → D的MooncakeConnectorV1。"
+    },
+    {
+      "id": "cache",
+      "title": "P本地：12GiB LMCache缓存服务",
+      "role": "cache",
+      "archive_date": "2026-10-20",
+      "host": "8",
+      "container": "ks-pp-luv-m8-priv",
+      "layout": "独立本地缓存进程；不是第二个模型计算副本",
+      "source_path": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\参数准备\\cache-m8-12g.native.sh",
+      "command": "lmcache server --host 127.0.0.1 --port 5565 --http-host 127.0.0.1 --http-port 15565 --chunk-size 512 --supported-transfer-mode lmcache_driven --l1-size-gb 12 --eviction-policy LRU --l1-align-bytes 65536 --disable-metrics --instance-id ks-luv-m8-p-local-20261020",
+      "environment_source": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\参数准备\\cache-m8-12g.native.sh",
+      "environment_text": "#!/usr/bin/env bash\nexport KS_TTFT_TRACE_DIR=/dev/shm/ks-ttft-prepare-20261020/runtime/traces\nexport KS_MP=/opt/ks-lmcache-stage2/official-mp-v0.5.6rc5\nexport KS_WORK_HOME=/dev/shm/ks-ttft-prepare-20261020/work/p/home\nexport HOME=\"$KS_WORK_HOME\"\nexport TMPDIR=/dev/shm/ks-ttft-prepare-20261020/work/p/tmp\nexport XDG_CACHE_HOME=/dev/shm/ks-ttft-prepare-20261020/work/p/cache\nexport PATH=\"$KS_MP/venv/bin:$PATH\"\nexport PYTHONPATH=\"/dev/shm/ks-ttft-prepare-20261020/runtime:$KS_MP/LMCache-Ascend-official-v0.5.6rc5:${PYTHONPATH:-}\"\nexport PYTHONDONTWRITEBYTECODE=1\nexport ASCEND_RT_VISIBLE_DEVICES=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15\nexport LMCACHE_TRACK_USAGE=false\nunset TORCH_DEVICE_BACKEND_AUTOLOAD LMCACHE_CONFIG_FILE\nmkdir -p \"$KS_WORK_HOME\" \"$TMPDIR\" \"$XDG_CACHE_HOME\"\ncd /dev/shm/ks-ttft-prepare-20261020/work/p\n\n",
+      "readiness": "完整缓存命令与归档脚本一致；需要其环境段及相同运行副本，未执行。",
+      "dependencies": [
+        {
+          "name": "LMCache运行环境",
+          "status": "必需",
+          "detail": "归档PATH指向/opt/ks-lmcache-stage2/official-mp-v0.5.6rc5/venv/bin；配套Ascend插件及runtime已经准备，不由这行命令安装。"
+        },
+        {
+          "name": "适配 / pin / 观测",
+          "status": "配套归档运行副本包含",
+          "detail": "与上面的P ON作为一套归档环境使用，命令本身不会应用任何源码补丁。"
+        }
+      ],
+      "cache_parameters": {
+        "l1_gib": 12,
+        "chunk_tokens": 512,
+        "alignment_bytes": 65536,
+        "eviction": "LRU",
+        "gpu_worker_count": "CLI未显式设置，归档说明保留默认1",
+        "rpc_port": 5565,
+        "http_port": 15565
+      }
+    },
+    {
+      "id": "d0",
+      "title": "D：0号接口",
+      "role": "D",
+      "archive_date": "2026-10-20",
+      "original_configuration_date": "2026-10-12",
+      "host": "137",
+      "container": "ks-pp-m137-priv",
+      "layout": "全组DP4；本接口DP rank 0 / TP4 / PP1；MTP3",
+      "cards": "0,1,2,3",
+      "port": 18200,
+      "source_path": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\参数准备\\d0-m137.native.sh",
+      "command": "vllm serve /mnt/sdb/models/GLM-5.1-w8a8c8-MTP \\\n  --host 0.0.0.0 \\\n  --port 18200 \\\n  --data-parallel-size 4 \\\n  --data-parallel-rank 0 \\\n  --data-parallel-address 192.168.0.223 \\\n  --data-parallel-rpc-port 18300 \\\n  --tensor-parallel-size 4 \\\n  --pipeline-parallel-size 1 \\\n  --enable-expert-parallel \\\n  --hf-overrides '{\"use_index_cache\":true,\"index_topk_freq\":4}' \\\n  --seed 1024 \\\n  --served-model-name glm-5 \\\n  --max-model-len 32768 \\\n  --max-num-batched-tokens 164 \\\n  --max-num-seqs 32 \\\n  --compilation-config '{\"cudagraph_mode\":\"FULL_DECODE_ONLY\"}' \\\n  --speculative-config '{\"num_speculative_tokens\":3,\"method\":\"deepseek_mtp\",\"enforce_eager\":true}' \\\n  --additional-config '{\"fuse_muls_add\":true,\"recompute_scheduler_enable\":true,\"multistream_overlap_shared_expert\":true,\"enable_sparse_sfa_c8\":true,\"enable_sparse_li_c8\":true}' \\\n  --trust-remote-code \\\n  --no-enable-prefix-caching \\\n  --gpu-memory-utilization 0.92 \\\n  --async-scheduling \\\n  --quantization ascend \\\n  --enable-auto-tool-choice \\\n  --tool-call-parser glm47 \\\n  --reasoning-parser glm45 \\\n  --kv-transfer-config '{\"kv_connector\":\"MooncakeConnectorV1\",\"kv_role\":\"kv_consumer\",\"kv_port\":\"29000\",\"engine_id\":\"ks-d-off-0\",\"kv_connector_extra_config\":{\"use_ascend_direct\":true,\"prefill\":{\"dp_size\":1,\"tp_size\":8,\"pp_size\":2,\"pp_layer_partition\":\"41,37\"},\"decode\":{\"dp_size\":4,\"tp_size\":4,\"pp_size\":1}}}'",
+      "environment_source": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\参数准备\\d0-m137.native.sh",
+      "environment_text": "#!/usr/bin/env bash\nexport ASCEND_RT_VISIBLE_DEVICES=0,1,2,3\nexport ACL_OP_INIT_MODE=1\nexport ASCEND_TOOLKIT_LATEST_HOME=/usr/local/Ascend/ascend-toolkit/latest\nexport HCCL_SOCKET_IFNAME=enp23s0f3\nexport ATB_OPSRUNNER_KERNEL_CACHE_LOCAL_COUNT=1\nexport ATB_STREAM_SYNC_EVERY_RUNNER_ENABLE=0\nexport PYTHONHASHSEED=0\nexport KS_NODE=M137\nexport ATB_STREAM_SYNC_EVERY_KERNEL_ENABLE=0\nexport ATB_CXX_ABI=1\nexport ATB_OPSRUNNER_KERNEL_CACHE_GLOABL_COUNT=5\nexport GLOO_SOCKET_IFNAME=enp23s0f3\nexport PYTORCH_NPU_ALLOC_CONF=expandable_segments:True\nexport KS_CONTAINER=ks-pp-m137-priv\nexport HCCL_BUFFSIZE=256\nexport ATB_HOME_PATH=/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1\nexport VLLM_ASCEND_ENABLE_FUSED_MC2=1\nexport CMAKE_PREFIX_PATH=/usr/local/Ascend/cann-9.1.0/toolkit/tools/tikicpulib/lib/cmake:/usr/local/Ascend/cann-9.1.0/lib64/cmake\nexport TOOLCHAIN_HOME=/usr/local/Ascend/cann-9.1.0/toolkit\nexport HCCL_OP_EXPANSION_MODE=AIV\nexport OMP_PROC_BIND=false\nexport ASCEND_TOOLKIT_HOME=/usr/local/Ascend/cann-9.1.0\nexport KS_RUN=/opt/ks-repro-dualside-20261019/baselines/deployment/p12/on_p_local_multi17_false_20261016/d\nexport PYTHONPATH=/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:\nexport LCCL_DETERMINISTIC=0\nexport TASK_QUEUE_ENABLE=1\nexport VLLM_ASCEND_ENABLE_MLAPO=1\nexport TP_SOCKET_IFNAME=enp23s0f3\nexport ATB_COMPARE_TILING_EVERY_KERNEL=0\nexport ASCEND_OPP_PATH=/usr/local/Ascend/cann-9.1.0/opp\nexport LD_LIBRARY_PATH=/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib::/usr/local/lib\nexport LCCL_PARALLEL=0\nexport SOC_VERSION=ascend910_9391\nexport ASCEND_AICPU_PATH=/usr/local/Ascend/cann-9.1.0\nexport OMP_NUM_THREADS=1\nexport ATB_STREAM_SYNC_EVERY_OPERATION_ENABLE=0\nexport PATH=/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/bin:/usr/local/Ascend/ascend-toolkit/latest/bin:/usr/local/Ascend/ascend-toolkit/latest/compiler/ccec_compiler/bin:/usr/local/Ascend/ascend-toolkit/latest/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/show_kernel_debug_data:/usr/local/Ascend/cann-9.1.0/tools/msobjdump:/usr/local/Ascend/cann-9.1.0/bin:/usr/local/Ascend/cann-9.1.0/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/profiler/bin:/usr/local/Ascend/cann-9.1.0/tools/ascend_system_advisor/asys:/usr/local/python3.12.13/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nexport ASCEND_HOME_PATH=/usr/local/Ascend/cann-9.1.0\nexport HCCL_IF_IP=192.168.0.223\nexport ATB_MATMUL_SHUFFLE_K_ENABLE=1\nexport ASCEND_A3_ENABLE=1\nexport DEBIAN_FRONTEND=noninteractive\nexport ATB_WORKSPACE_MEM_ALLOC_ALG_TYPE=1\nexport ATB_SHARE_MEMORY_NAME_SUFFIX=''\nexport KS_WORK_HOME=/opt/ks-repro-dualside-20261019/baselines/deployment/p12/on_p_local_multi17_false_20261016/d/home-d0\nexport TMPDIR=/opt/ks-repro-dualside-20261019/tmp/d0\nexport XDG_CACHE_HOME=/opt/ks-repro-dualside-20261019/baselines/deployment/p12/on_p_local_multi17_false_20261016/d/cache-d0\nexport HF_HOME=/opt/ks-repro-dualside-20261019/baselines/deployment/p12/on_p_local_multi17_false_20261016/d/cache-d0/huggingface\nexport PYTHONDONTWRITEBYTECODE=1\nmkdir -p \"$KS_WORK_HOME\" \"$TMPDIR\" \"$XDG_CACHE_HOME\" \"$HF_HOME\"\ncd /opt/ks-repro-dualside-20261019/baselines/deployment/p12/on_p_local_multi17_false_20261016/d\n\n",
+      "readiness": "完整serve及环境均保留；命令与归档脚本逐字核对，未执行。",
+      "dependencies": [
+        {
+          "name": "P侧17行 / pin补丁",
+          "status": "D不依赖",
+          "detail": "本D继续原Mooncake consumer，不接LMCache；不将P侧兼容补丁列作D必需改动。"
+        }
+      ],
+      "route": "从P侧Mooncake接收KV，D本身不读取本地LMCache。"
+    },
+    {
+      "id": "d1",
+      "title": "D：1号接口",
+      "role": "D",
+      "archive_date": "2026-10-20",
+      "original_configuration_date": "2026-10-12",
+      "host": "137",
+      "container": "ks-pp-m137-priv",
+      "layout": "全组DP4；本接口DP rank 1 / TP4 / PP1；MTP3",
+      "cards": "4,5,6,7",
+      "port": 18201,
+      "source_path": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\参数准备\\d1-m137.native.sh",
+      "command": "vllm serve /mnt/sdb/models/GLM-5.1-w8a8c8-MTP \\\n  --host 0.0.0.0 \\\n  --port 18201 \\\n  --data-parallel-size 4 \\\n  --data-parallel-rank 1 \\\n  --data-parallel-address 192.168.0.223 \\\n  --data-parallel-rpc-port 18300 \\\n  --tensor-parallel-size 4 \\\n  --pipeline-parallel-size 1 \\\n  --enable-expert-parallel \\\n  --hf-overrides '{\"use_index_cache\":true,\"index_topk_freq\":4}' \\\n  --seed 1024 \\\n  --served-model-name glm-5 \\\n  --max-model-len 32768 \\\n  --max-num-batched-tokens 164 \\\n  --max-num-seqs 32 \\\n  --compilation-config '{\"cudagraph_mode\":\"FULL_DECODE_ONLY\"}' \\\n  --speculative-config '{\"num_speculative_tokens\":3,\"method\":\"deepseek_mtp\",\"enforce_eager\":true}' \\\n  --additional-config '{\"fuse_muls_add\":true,\"recompute_scheduler_enable\":true,\"multistream_overlap_shared_expert\":true,\"enable_sparse_sfa_c8\":true,\"enable_sparse_li_c8\":true}' \\\n  --trust-remote-code \\\n  --no-enable-prefix-caching \\\n  --gpu-memory-utilization 0.92 \\\n  --async-scheduling \\\n  --quantization ascend \\\n  --enable-auto-tool-choice \\\n  --tool-call-parser glm47 \\\n  --reasoning-parser glm45 \\\n  --kv-transfer-config '{\"kv_connector\":\"MooncakeConnectorV1\",\"kv_role\":\"kv_consumer\",\"kv_port\":\"29000\",\"engine_id\":\"ks-d-off-1\",\"kv_connector_extra_config\":{\"use_ascend_direct\":true,\"prefill\":{\"dp_size\":1,\"tp_size\":8,\"pp_size\":2,\"pp_layer_partition\":\"41,37\"},\"decode\":{\"dp_size\":4,\"tp_size\":4,\"pp_size\":1}}}'",
+      "environment_source": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\参数准备\\d1-m137.native.sh",
+      "environment_text": "#!/usr/bin/env bash\nexport ASCEND_RT_VISIBLE_DEVICES=4,5,6,7\nexport ACL_OP_INIT_MODE=1\nexport ASCEND_TOOLKIT_LATEST_HOME=/usr/local/Ascend/ascend-toolkit/latest\nexport HCCL_SOCKET_IFNAME=enp23s0f3\nexport ATB_OPSRUNNER_KERNEL_CACHE_LOCAL_COUNT=1\nexport ATB_STREAM_SYNC_EVERY_RUNNER_ENABLE=0\nexport PYTHONHASHSEED=0\nexport KS_NODE=M137\nexport ATB_STREAM_SYNC_EVERY_KERNEL_ENABLE=0\nexport ATB_CXX_ABI=1\nexport ATB_OPSRUNNER_KERNEL_CACHE_GLOABL_COUNT=5\nexport GLOO_SOCKET_IFNAME=enp23s0f3\nexport PYTORCH_NPU_ALLOC_CONF=expandable_segments:True\nexport KS_CONTAINER=ks-pp-m137-priv\nexport HCCL_BUFFSIZE=256\nexport ATB_HOME_PATH=/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1\nexport VLLM_ASCEND_ENABLE_FUSED_MC2=1\nexport CMAKE_PREFIX_PATH=/usr/local/Ascend/cann-9.1.0/toolkit/tools/tikicpulib/lib/cmake:/usr/local/Ascend/cann-9.1.0/lib64/cmake\nexport TOOLCHAIN_HOME=/usr/local/Ascend/cann-9.1.0/toolkit\nexport HCCL_OP_EXPANSION_MODE=AIV\nexport OMP_PROC_BIND=false\nexport ASCEND_TOOLKIT_HOME=/usr/local/Ascend/cann-9.1.0\nexport KS_RUN=/opt/ks-repro-dualside-20261019/baselines/deployment/p12/on_p_local_multi17_false_20261016/d\nexport PYTHONPATH=/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:\nexport LCCL_DETERMINISTIC=0\nexport TASK_QUEUE_ENABLE=1\nexport VLLM_ASCEND_ENABLE_MLAPO=1\nexport TP_SOCKET_IFNAME=enp23s0f3\nexport ATB_COMPARE_TILING_EVERY_KERNEL=0\nexport ASCEND_OPP_PATH=/usr/local/Ascend/cann-9.1.0/opp\nexport LD_LIBRARY_PATH=/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib::/usr/local/lib\nexport LCCL_PARALLEL=0\nexport SOC_VERSION=ascend910_9391\nexport ASCEND_AICPU_PATH=/usr/local/Ascend/cann-9.1.0\nexport OMP_NUM_THREADS=1\nexport ATB_STREAM_SYNC_EVERY_OPERATION_ENABLE=0\nexport PATH=/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/bin:/usr/local/Ascend/ascend-toolkit/latest/bin:/usr/local/Ascend/ascend-toolkit/latest/compiler/ccec_compiler/bin:/usr/local/Ascend/ascend-toolkit/latest/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/show_kernel_debug_data:/usr/local/Ascend/cann-9.1.0/tools/msobjdump:/usr/local/Ascend/cann-9.1.0/bin:/usr/local/Ascend/cann-9.1.0/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/profiler/bin:/usr/local/Ascend/cann-9.1.0/tools/ascend_system_advisor/asys:/usr/local/python3.12.13/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nexport ASCEND_HOME_PATH=/usr/local/Ascend/cann-9.1.0\nexport HCCL_IF_IP=192.168.0.223\nexport ATB_MATMUL_SHUFFLE_K_ENABLE=1\nexport ASCEND_A3_ENABLE=1\nexport DEBIAN_FRONTEND=noninteractive\nexport ATB_WORKSPACE_MEM_ALLOC_ALG_TYPE=1\nexport ATB_SHARE_MEMORY_NAME_SUFFIX=''\nexport KS_WORK_HOME=/opt/ks-repro-dualside-20261019/baselines/deployment/p12/on_p_local_multi17_false_20261016/d/home-d1\nexport TMPDIR=/opt/ks-repro-dualside-20261019/tmp/d1\nexport XDG_CACHE_HOME=/opt/ks-repro-dualside-20261019/baselines/deployment/p12/on_p_local_multi17_false_20261016/d/cache-d1\nexport HF_HOME=/opt/ks-repro-dualside-20261019/baselines/deployment/p12/on_p_local_multi17_false_20261016/d/cache-d1/huggingface\nexport PYTHONDONTWRITEBYTECODE=1\nmkdir -p \"$KS_WORK_HOME\" \"$TMPDIR\" \"$XDG_CACHE_HOME\" \"$HF_HOME\"\ncd /opt/ks-repro-dualside-20261019/baselines/deployment/p12/on_p_local_multi17_false_20261016/d\n\n",
+      "readiness": "完整serve及环境均保留；命令与归档脚本逐字核对，未执行。",
+      "dependencies": [
+        {
+          "name": "P侧17行 / pin补丁",
+          "status": "D不依赖",
+          "detail": "本D继续原Mooncake consumer，不接LMCache；不将P侧兼容补丁列作D必需改动。"
+        }
+      ],
+      "route": "从P侧Mooncake接收KV，D本身不读取本地LMCache。"
+    },
+    {
+      "id": "d2",
+      "title": "D：2号接口",
+      "role": "D",
+      "archive_date": "2026-10-20",
+      "original_configuration_date": "2026-10-12",
+      "host": "137",
+      "container": "ks-pp-m137-priv",
+      "layout": "全组DP4；本接口DP rank 2 / TP4 / PP1；MTP3",
+      "cards": "8,9,10,11",
+      "port": 18202,
+      "source_path": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\参数准备\\d2-m137.native.sh",
+      "command": "vllm serve /mnt/sdb/models/GLM-5.1-w8a8c8-MTP \\\n  --host 0.0.0.0 \\\n  --port 18202 \\\n  --data-parallel-size 4 \\\n  --data-parallel-rank 2 \\\n  --data-parallel-address 192.168.0.223 \\\n  --data-parallel-rpc-port 18300 \\\n  --tensor-parallel-size 4 \\\n  --pipeline-parallel-size 1 \\\n  --enable-expert-parallel \\\n  --hf-overrides '{\"use_index_cache\":true,\"index_topk_freq\":4}' \\\n  --seed 1024 \\\n  --served-model-name glm-5 \\\n  --max-model-len 32768 \\\n  --max-num-batched-tokens 164 \\\n  --max-num-seqs 32 \\\n  --compilation-config '{\"cudagraph_mode\":\"FULL_DECODE_ONLY\"}' \\\n  --speculative-config '{\"num_speculative_tokens\":3,\"method\":\"deepseek_mtp\",\"enforce_eager\":true}' \\\n  --additional-config '{\"fuse_muls_add\":true,\"recompute_scheduler_enable\":true,\"multistream_overlap_shared_expert\":true,\"enable_sparse_sfa_c8\":true,\"enable_sparse_li_c8\":true}' \\\n  --trust-remote-code \\\n  --no-enable-prefix-caching \\\n  --gpu-memory-utilization 0.92 \\\n  --async-scheduling \\\n  --quantization ascend \\\n  --enable-auto-tool-choice \\\n  --tool-call-parser glm47 \\\n  --reasoning-parser glm45 \\\n  --kv-transfer-config '{\"kv_connector\":\"MooncakeConnectorV1\",\"kv_role\":\"kv_consumer\",\"kv_port\":\"29000\",\"engine_id\":\"ks-d-off-2\",\"kv_connector_extra_config\":{\"use_ascend_direct\":true,\"prefill\":{\"dp_size\":1,\"tp_size\":8,\"pp_size\":2,\"pp_layer_partition\":\"41,37\"},\"decode\":{\"dp_size\":4,\"tp_size\":4,\"pp_size\":1}}}'",
+      "environment_source": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\参数准备\\d2-m137.native.sh",
+      "environment_text": "#!/usr/bin/env bash\nexport ASCEND_RT_VISIBLE_DEVICES=8,9,10,11\nexport ACL_OP_INIT_MODE=1\nexport ASCEND_TOOLKIT_LATEST_HOME=/usr/local/Ascend/ascend-toolkit/latest\nexport HCCL_SOCKET_IFNAME=enp23s0f3\nexport ATB_OPSRUNNER_KERNEL_CACHE_LOCAL_COUNT=1\nexport ATB_STREAM_SYNC_EVERY_RUNNER_ENABLE=0\nexport PYTHONHASHSEED=0\nexport KS_NODE=M137\nexport ATB_STREAM_SYNC_EVERY_KERNEL_ENABLE=0\nexport ATB_CXX_ABI=1\nexport ATB_OPSRUNNER_KERNEL_CACHE_GLOABL_COUNT=5\nexport GLOO_SOCKET_IFNAME=enp23s0f3\nexport PYTORCH_NPU_ALLOC_CONF=expandable_segments:True\nexport KS_CONTAINER=ks-pp-m137-priv\nexport HCCL_BUFFSIZE=256\nexport ATB_HOME_PATH=/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1\nexport VLLM_ASCEND_ENABLE_FUSED_MC2=1\nexport CMAKE_PREFIX_PATH=/usr/local/Ascend/cann-9.1.0/toolkit/tools/tikicpulib/lib/cmake:/usr/local/Ascend/cann-9.1.0/lib64/cmake\nexport TOOLCHAIN_HOME=/usr/local/Ascend/cann-9.1.0/toolkit\nexport HCCL_OP_EXPANSION_MODE=AIV\nexport OMP_PROC_BIND=false\nexport ASCEND_TOOLKIT_HOME=/usr/local/Ascend/cann-9.1.0\nexport KS_RUN=/opt/ks-repro-dualside-20261019/baselines/deployment/p12/on_p_local_multi17_false_20261016/d\nexport PYTHONPATH=/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:\nexport LCCL_DETERMINISTIC=0\nexport TASK_QUEUE_ENABLE=1\nexport VLLM_ASCEND_ENABLE_MLAPO=1\nexport TP_SOCKET_IFNAME=enp23s0f3\nexport ATB_COMPARE_TILING_EVERY_KERNEL=0\nexport ASCEND_OPP_PATH=/usr/local/Ascend/cann-9.1.0/opp\nexport LD_LIBRARY_PATH=/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib::/usr/local/lib\nexport LCCL_PARALLEL=0\nexport SOC_VERSION=ascend910_9391\nexport ASCEND_AICPU_PATH=/usr/local/Ascend/cann-9.1.0\nexport OMP_NUM_THREADS=1\nexport ATB_STREAM_SYNC_EVERY_OPERATION_ENABLE=0\nexport PATH=/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/bin:/usr/local/Ascend/ascend-toolkit/latest/bin:/usr/local/Ascend/ascend-toolkit/latest/compiler/ccec_compiler/bin:/usr/local/Ascend/ascend-toolkit/latest/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/show_kernel_debug_data:/usr/local/Ascend/cann-9.1.0/tools/msobjdump:/usr/local/Ascend/cann-9.1.0/bin:/usr/local/Ascend/cann-9.1.0/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/profiler/bin:/usr/local/Ascend/cann-9.1.0/tools/ascend_system_advisor/asys:/usr/local/python3.12.13/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nexport ASCEND_HOME_PATH=/usr/local/Ascend/cann-9.1.0\nexport HCCL_IF_IP=192.168.0.223\nexport ATB_MATMUL_SHUFFLE_K_ENABLE=1\nexport ASCEND_A3_ENABLE=1\nexport DEBIAN_FRONTEND=noninteractive\nexport ATB_WORKSPACE_MEM_ALLOC_ALG_TYPE=1\nexport ATB_SHARE_MEMORY_NAME_SUFFIX=''\nexport KS_WORK_HOME=/opt/ks-repro-dualside-20261019/baselines/deployment/p12/on_p_local_multi17_false_20261016/d/home-d2\nexport TMPDIR=/opt/ks-repro-dualside-20261019/tmp/d2\nexport XDG_CACHE_HOME=/opt/ks-repro-dualside-20261019/baselines/deployment/p12/on_p_local_multi17_false_20261016/d/cache-d2\nexport HF_HOME=/opt/ks-repro-dualside-20261019/baselines/deployment/p12/on_p_local_multi17_false_20261016/d/cache-d2/huggingface\nexport PYTHONDONTWRITEBYTECODE=1\nmkdir -p \"$KS_WORK_HOME\" \"$TMPDIR\" \"$XDG_CACHE_HOME\" \"$HF_HOME\"\ncd /opt/ks-repro-dualside-20261019/baselines/deployment/p12/on_p_local_multi17_false_20261016/d\n\n",
+      "readiness": "完整serve及环境均保留；命令与归档脚本逐字核对，未执行。",
+      "dependencies": [
+        {
+          "name": "P侧17行 / pin补丁",
+          "status": "D不依赖",
+          "detail": "本D继续原Mooncake consumer，不接LMCache；不将P侧兼容补丁列作D必需改动。"
+        }
+      ],
+      "route": "从P侧Mooncake接收KV，D本身不读取本地LMCache。"
+    },
+    {
+      "id": "d3",
+      "title": "D：3号接口",
+      "role": "D",
+      "archive_date": "2026-10-20",
+      "original_configuration_date": "2026-10-12",
+      "host": "137",
+      "container": "ks-pp-m137-priv",
+      "layout": "全组DP4；本接口DP rank 3 / TP4 / PP1；MTP3",
+      "cards": "12,13,14,15",
+      "port": 18203,
+      "source_path": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\参数准备\\d3-m137.native.sh",
+      "command": "vllm serve /mnt/sdb/models/GLM-5.1-w8a8c8-MTP \\\n  --host 0.0.0.0 \\\n  --port 18203 \\\n  --data-parallel-size 4 \\\n  --data-parallel-rank 3 \\\n  --data-parallel-address 192.168.0.223 \\\n  --data-parallel-rpc-port 18300 \\\n  --tensor-parallel-size 4 \\\n  --pipeline-parallel-size 1 \\\n  --enable-expert-parallel \\\n  --hf-overrides '{\"use_index_cache\":true,\"index_topk_freq\":4}' \\\n  --seed 1024 \\\n  --served-model-name glm-5 \\\n  --max-model-len 32768 \\\n  --max-num-batched-tokens 164 \\\n  --max-num-seqs 32 \\\n  --compilation-config '{\"cudagraph_mode\":\"FULL_DECODE_ONLY\"}' \\\n  --speculative-config '{\"num_speculative_tokens\":3,\"method\":\"deepseek_mtp\",\"enforce_eager\":true}' \\\n  --additional-config '{\"fuse_muls_add\":true,\"recompute_scheduler_enable\":true,\"multistream_overlap_shared_expert\":true,\"enable_sparse_sfa_c8\":true,\"enable_sparse_li_c8\":true}' \\\n  --trust-remote-code \\\n  --no-enable-prefix-caching \\\n  --gpu-memory-utilization 0.92 \\\n  --async-scheduling \\\n  --quantization ascend \\\n  --enable-auto-tool-choice \\\n  --tool-call-parser glm47 \\\n  --reasoning-parser glm45 \\\n  --kv-transfer-config '{\"kv_connector\":\"MooncakeConnectorV1\",\"kv_role\":\"kv_consumer\",\"kv_port\":\"29000\",\"engine_id\":\"ks-d-off-3\",\"kv_connector_extra_config\":{\"use_ascend_direct\":true,\"prefill\":{\"dp_size\":1,\"tp_size\":8,\"pp_size\":2,\"pp_layer_partition\":\"41,37\"},\"decode\":{\"dp_size\":4,\"tp_size\":4,\"pp_size\":1}}}'",
+      "environment_source": "E:\\work\\ks\\output\\ks_ttft_prepare_m8_m137_20261020\\参数准备\\d3-m137.native.sh",
+      "environment_text": "#!/usr/bin/env bash\nexport ASCEND_RT_VISIBLE_DEVICES=12,13,14,15\nexport ACL_OP_INIT_MODE=1\nexport ASCEND_TOOLKIT_LATEST_HOME=/usr/local/Ascend/ascend-toolkit/latest\nexport HCCL_SOCKET_IFNAME=enp23s0f3\nexport ATB_OPSRUNNER_KERNEL_CACHE_LOCAL_COUNT=1\nexport ATB_STREAM_SYNC_EVERY_RUNNER_ENABLE=0\nexport PYTHONHASHSEED=0\nexport KS_NODE=M137\nexport ATB_STREAM_SYNC_EVERY_KERNEL_ENABLE=0\nexport ATB_CXX_ABI=1\nexport ATB_OPSRUNNER_KERNEL_CACHE_GLOABL_COUNT=5\nexport GLOO_SOCKET_IFNAME=enp23s0f3\nexport PYTORCH_NPU_ALLOC_CONF=expandable_segments:True\nexport KS_CONTAINER=ks-pp-m137-priv\nexport HCCL_BUFFSIZE=256\nexport ATB_HOME_PATH=/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1\nexport VLLM_ASCEND_ENABLE_FUSED_MC2=1\nexport CMAKE_PREFIX_PATH=/usr/local/Ascend/cann-9.1.0/toolkit/tools/tikicpulib/lib/cmake:/usr/local/Ascend/cann-9.1.0/lib64/cmake\nexport TOOLCHAIN_HOME=/usr/local/Ascend/cann-9.1.0/toolkit\nexport HCCL_OP_EXPANSION_MODE=AIV\nexport OMP_PROC_BIND=false\nexport ASCEND_TOOLKIT_HOME=/usr/local/Ascend/cann-9.1.0\nexport KS_RUN=/opt/ks-repro-dualside-20261019/baselines/deployment/p12/on_p_local_multi17_false_20261016/d\nexport PYTHONPATH=/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:\nexport LCCL_DETERMINISTIC=0\nexport TASK_QUEUE_ENABLE=1\nexport VLLM_ASCEND_ENABLE_MLAPO=1\nexport TP_SOCKET_IFNAME=enp23s0f3\nexport ATB_COMPARE_TILING_EVERY_KERNEL=0\nexport ASCEND_OPP_PATH=/usr/local/Ascend/cann-9.1.0/opp\nexport LD_LIBRARY_PATH=/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib::/usr/local/lib\nexport LCCL_PARALLEL=0\nexport SOC_VERSION=ascend910_9391\nexport ASCEND_AICPU_PATH=/usr/local/Ascend/cann-9.1.0\nexport OMP_NUM_THREADS=1\nexport ATB_STREAM_SYNC_EVERY_OPERATION_ENABLE=0\nexport PATH=/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/bin:/usr/local/Ascend/ascend-toolkit/latest/bin:/usr/local/Ascend/ascend-toolkit/latest/compiler/ccec_compiler/bin:/usr/local/Ascend/ascend-toolkit/latest/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/show_kernel_debug_data:/usr/local/Ascend/cann-9.1.0/tools/msobjdump:/usr/local/Ascend/cann-9.1.0/bin:/usr/local/Ascend/cann-9.1.0/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/profiler/bin:/usr/local/Ascend/cann-9.1.0/tools/ascend_system_advisor/asys:/usr/local/python3.12.13/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nexport ASCEND_HOME_PATH=/usr/local/Ascend/cann-9.1.0\nexport HCCL_IF_IP=192.168.0.223\nexport ATB_MATMUL_SHUFFLE_K_ENABLE=1\nexport ASCEND_A3_ENABLE=1\nexport DEBIAN_FRONTEND=noninteractive\nexport ATB_WORKSPACE_MEM_ALLOC_ALG_TYPE=1\nexport ATB_SHARE_MEMORY_NAME_SUFFIX=''\nexport KS_WORK_HOME=/opt/ks-repro-dualside-20261019/baselines/deployment/p12/on_p_local_multi17_false_20261016/d/home-d3\nexport TMPDIR=/opt/ks-repro-dualside-20261019/tmp/d3\nexport XDG_CACHE_HOME=/opt/ks-repro-dualside-20261019/baselines/deployment/p12/on_p_local_multi17_false_20261016/d/cache-d3\nexport HF_HOME=/opt/ks-repro-dualside-20261019/baselines/deployment/p12/on_p_local_multi17_false_20261016/d/cache-d3/huggingface\nexport PYTHONDONTWRITEBYTECODE=1\nmkdir -p \"$KS_WORK_HOME\" \"$TMPDIR\" \"$XDG_CACHE_HOME\" \"$HF_HOME\"\ncd /opt/ks-repro-dualside-20261019/baselines/deployment/p12/on_p_local_multi17_false_20261016/d\n\n",
+      "readiness": "完整serve及环境均保留；命令与归档脚本逐字核对，未执行。",
+      "dependencies": [
+        {
+          "name": "P侧17行 / pin补丁",
+          "status": "D不依赖",
+          "detail": "本D继续原Mooncake consumer，不接LMCache；不将P侧兼容补丁列作D必需改动。"
+        }
+      ],
+      "route": "从P侧Mooncake接收KV，D本身不读取本地LMCache。"
+    }
+  ],
+  "verification": {
+    "commands_executed": false,
+    "framework_imported": false,
+    "checks": "P ON、缓存与四D命令均与其原生归档源文本匹配；P环境内容一致（仅末尾换行差异）。OFF保留实际脚本链接，不合成替代启动命令。"
+  }
+}

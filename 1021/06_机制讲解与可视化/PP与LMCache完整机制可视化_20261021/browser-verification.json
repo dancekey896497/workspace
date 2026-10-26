@@ -1,0 +1,20 @@
+{
+  "status": "PASS",
+  "artifact": "E:\\work\\ks\\output\\ks_pp_lmcache_explained_20261021\\PP与LMCache_机制可视化报告.html",
+  "checks": [
+    "三档四列正式指标、单位、命中率与JSON逐值一致；三种图指标切换正常",
+    "三种命中情景、逐步导航与解释正常",
+    "六步时间线可用；六组源码逐行展示与原摘录完全一致",
+    "P ON、缓存与四D环境和命令完整一致；原OFF仍指向实际档案",
+    "1600px与390px页面无整体横向溢出；无JS异常、无网络资源请求"
+  ],
+  "errors": [],
+  "external_network_requests": [],
+  "screenshots": [
+    "C:\\Users\\luv_l\\AppData\\Local\\Temp\\ks-pp-report-overview.png",
+    "C:\\Users\\luv_l\\AppData\\Local\\Temp\\ks-pp-report-timeline.png",
+    "C:\\Users\\luv_l\\AppData\\Local\\Temp\\ks-pp-report-code.png",
+    "C:\\Users\\luv_l\\AppData\\Local\\Temp\\ks-pp-report-mobile.png"
+  ],
+  "scope": "只验证本地网页，不运行或验收任何推理服务、硬件性能或候选补丁"
+}
