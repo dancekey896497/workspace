@@ -1,0 +1,23 @@
+{
+  "status": "BROWSER_DOM_LOADED",
+  "exit_code": 0,
+  "title_ok": true,
+  "svg_count": 2,
+  "code_block_count": 1,
+  "file_access_error": false,
+  "dom_characters": 21738,
+  "isolated_profile": "C:\\Users\\luv_l\\AppData\\Local\\Temp\\ks-html-qa-e181beb5c263436e8a9f2630cc108cbd",
+  "default_profile_used": false,
+  "screenshot_saved": false,
+  "temporary_directory_retained": true,
+  "arguments": [
+    "--headless=new",
+    "--disable-gpu",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-background-networking",
+    "--user-data-dir=C:\\Users\\luv_l\\AppData\\Local\\Temp\\ks-html-qa-e181beb5c263436e8a9f2630cc108cbd",
+    "--dump-dom",
+    "file:///E:/work/ks/output/05_%E5%BD%93%E5%89%8D%E7%8E%AF%E5%A2%83%E4%B8%8E%E5%AE%9E%E9%AA%8C%E5%87%86%E5%A4%87/20261024_%E5%AE%A2%E6%88%B7%E6%95%B0%E6%8D%AE%E5%8E%8B%E6%B5%8B%E5%87%86%E5%A4%87/%E6%8A%A5%E5%91%8A/%E6%96%B0%E6%97%A7%E7%94%A8%E4%BE%8B%E4%B8%8E%E6%80%A7%E8%83%BD%E5%8E%9F%E7%90%86_%E6%9C%AC%E8%BD%AE%E7%BB%BC%E5%90%88%E8%AF%B4%E6%98%8E.html"
+  ]
+}

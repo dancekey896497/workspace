@@ -1,0 +1,739 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>客户原文_PP2_LMCache三组对照</title><style>*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:#f2f1eb;color:#25322f;font-family:"Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;line-height:1.75}main{max-width:1180px;margin:auto;padding:40px 24px 70px}header{padding:42px;background:#fffdf8;border-top:5px solid #31806c;border-bottom:1px solid #d9ded6}.eyebrow{font-size:13px;letter-spacing:.09em;color:#62746b;font-weight:700}h1{font-size:clamp(30px,4.6vw,54px);line-height:1.2;letter-spacing:-.04em;margin:22px 0}h2{font-size:28px;line-height:1.4;margin:4px 0 20px}h3{font-size:19px;margin:30px 0 12px}h4{font-size:15px}p{margin:10px 0 18px}.lead{font-size:22px;max-width:900px}.status{display:inline-block;border:1px solid #a7b6ab;background:#eef4ed;color:#406d59;border-radius:4px;padding:4px 12px;font-size:14px}.findings{padding-left:22px;font-size:18px;max-width:960px}.findings li{margin:8px 0}.muted{color:#718078;font-size:13px}nav{display:flex;gap:24px;flex-wrap:wrap;padding:18px 0;border-bottom:1px solid #d9ded6}nav a{color:#42675a;text-decoration:none;font-size:14px;font-weight:700}section{background:#fffdf8;margin-top:24px;padding:34px 36px;border:1px solid #d9ded6;scroll-margin-top:18px}.section-number{font-size:12px;color:#718078;letter-spacing:.12em}.chart{margin:18px 0 24px;border:1px solid #dde3db;padding:18px 20px;background:#fff}.chart-title{display:flex;justify-content:space-between;align-items:center;font-size:18px;font-weight:700}.chart-title span{font-size:12px;color:#7d867e;font-weight:400}svg{display:block;width:100%;height:auto;margin-top:12px}.gridline{stroke:#e8ece7;stroke-width:1}.axis{fill:#7b867f;font-size:13px}.bar-label{font-size:15px;fill:#35473f}.bar-value{font-size:14px;fill:#35473f;font-weight:700}.pending-bar{fill:#f6f7f3;stroke:#bcc7bd;stroke-dasharray:4 4}.table-wrap{overflow:auto;margin:18px 0 24px;border:1px solid #dce2d9}table{width:100%;border-collapse:collapse;min-width:740px}th,td{padding:11px 14px;border-bottom:1px solid #e5e9e1;text-align:right;font-size:14px;vertical-align:top}thead th{background:#edf1e8;color:#52675a;font-weight:700}th:first-child{text-align:left;min-width:220px}tbody th{font-weight:500;color:#44564c;background:#fcfcf7}tr:last-child th,tr:last-child td{border-bottom:0}tbody tr:hover{background:#f7f9f2}.good{color:#27775c;font-weight:700}.bad{color:#ac574b;font-weight:700}.neutral{color:#607467}details{border:1px solid #dce2d9;margin:12px 0;background:#fff}summary{cursor:pointer;padding:13px 16px;color:#3d6251;font-weight:700}details>p,details>h4{margin-left:18px;margin-right:18px}pre{overflow-x:auto;white-space:pre;overflow-wrap:normal;word-break:normal;background:#202a2d;color:#e5e9e8;font:13px/1.8 Consolas,"Cascadia Code",monospace;padding:20px;margin:0 0 18px;tab-size:4}pre.prose{background:#f7f8f3;color:#43574b;white-space:pre-wrap;line-height:1.8;font-family:inherit}.syn-flag{color:#92c8ef}.syn-string{color:#c0d69c}.syn-number{color:#e7bd83}.syn-keyword{color:#ceafd9}.path{font:12px/1.8 Consolas,monospace;color:#708075;overflow-wrap:anywhere}.notice{border-left:3px solid #b59150;background:#fbf6e9;padding:12px 18px}.boundaries{padding-left:22px}.boundaries li{margin:12px 0}footer{padding:30px 0 0;color:#718078;font-size:12px}@media(max-width:700px){main{padding:12px}header,section{padding:24px 18px}h2{font-size:24px}.lead{font-size:19px}nav{gap:16px}.chart{padding:12px}th,td{font-size:12px;padding:9px 10px}}</style></head><body><main><header><div class="eyebrow">KS · 客户原文 · PP=2 · 正式三组对照</div><h1>接入LMCache，<br>这一轮究竟改变了什么？</h1><div class="status">三组389条正式结果已齐</div><p class="lead">三组已齐：先看同形态OFF→ON，再看组合修改是否改善原异步ON。</p><ul class="findings"><li>原异步ON相比OFF：平均TTFT降低19.31%，平均TPOT降低0.61%，平均端到端耗时降低2.98%。</li><li>同步＋提前读取ON相比原异步ON：平均TTFT增加1.83%，平均TPOT降低0.64%，平均端到端耗时降低0.40%。</li></ul><p class="notice"><b>主结论边界：</b>原异步主结果是同一P已跑过完整首轮后的repeat2，缓存已清空；优化组为fresh P，只做过冷缓存最长诊断。<b>缓存初态相同，不等于进程热度完全相同。</b>以下性能是本轮观测，不能严称候选修改的纯因果收益。极慢请求的直接异常链已定位到HCCL连接失败／超时重试，底层资源失败原因仍未确定。</p><p class="muted">生成时间 2026-10-24 22:36:29 · 只展示已完成来源；未测数据留空</p></header>
+<nav><a href="#effect">直接效果</a><a href="#metrics">完整指标</a><a href="#setup">对照条件</a><a href="#interpretation">机制与边界</a><a href="#repro">原生命令</a><a href="#evidence">证据边界</a></nav>
+<section id="effect"><div class="section-number">01</div><h2>先看最直接的三个效果</h2><p>每张图单位独立，三组使用同一坐标范围。待测栏只标状态，不当作零值绘图。</p><article class="chart"><div class="chart-title">平均TTFT<span>秒 · 越低越好</span></div><svg viewBox="0 0 970 210" role="img" aria-label="平均TTFT"><line x1="215.0" y1="10" x2="215.0" y2="174" class="gridline"/><text x="215.0" y="197" class="axis" text-anchor="middle">0.00</text><line x1="377.5" y1="10" x2="377.5" y2="174" class="gridline"/><text x="377.5" y="197" class="axis" text-anchor="middle">0.50</text><line x1="540.0" y1="10" x2="540.0" y2="174" class="gridline"/><text x="540.0" y="197" class="axis" text-anchor="middle">1.01</text><line x1="702.5" y1="10" x2="702.5" y2="174" class="gridline"/><text x="702.5" y="197" class="axis" text-anchor="middle">1.51</text><line x1="865.0" y1="10" x2="865.0" y2="174" class="gridline"/><text x="865.0" y="197" class="axis" text-anchor="middle">2.02</text><text x="0" y="45" class="bar-label">不接LMCache</text><rect x="215" y="23" width="550.8474576271186" height="31" rx="3" fill="#5374aa"/><text x="774.8474576271186" y="45" class="bar-value">1.7081</text><text x="0" y="100" class="bar-label">原异步ON</text><rect x="215" y="78" width="444.45412302429173" height="31" rx="3" fill="#bb8539"/><text x="668.4541230242917" y="100" class="bar-value">1.3782</text><text x="0" y="155" class="bar-label">同步＋提前读取ON</text><rect x="215" y="133" width="452.57247027635185" height="31" rx="3" fill="#31806c"/><text x="676.5724702763519" y="155" class="bar-value">1.4034</text></svg></article><article class="chart"><div class="chart-title">平均TPOT<span>毫秒 · 越低越好</span></div><svg viewBox="0 0 970 210" role="img" aria-label="平均TPOT"><line x1="215.0" y1="10" x2="215.0" y2="174" class="gridline"/><text x="215.0" y="197" class="axis" text-anchor="middle">0.00</text><line x1="377.5" y1="10" x2="377.5" y2="174" class="gridline"/><text x="377.5" y="197" class="axis" text-anchor="middle">6.81</text><line x1="540.0" y1="10" x2="540.0" y2="174" class="gridline"/><text x="540.0" y="197" class="axis" text-anchor="middle">13.61</text><line x1="702.5" y1="10" x2="702.5" y2="174" class="gridline"/><text x="702.5" y="197" class="axis" text-anchor="middle">20.42</text><line x1="865.0" y1="10" x2="865.0" y2="174" class="gridline"/><text x="865.0" y="197" class="axis" text-anchor="middle">27.22</text><text x="0" y="45" class="bar-label">不接LMCache</text><rect x="215" y="23" width="550.8474576271187" height="31" rx="3" fill="#5374aa"/><text x="774.8474576271187" y="45" class="bar-value">23.0687</text><text x="0" y="100" class="bar-label">原异步ON</text><rect x="215" y="78" width="547.500550045021" height="31" rx="3" fill="#bb8539"/><text x="771.500550045021" y="100" class="bar-value">22.9286</text><text x="0" y="155" class="bar-label">同步＋提前读取ON</text><rect x="215" y="133" width="543.9732829593659" height="31" rx="3" fill="#31806c"/><text x="767.9732829593659" y="155" class="bar-value">22.7809</text></svg></article><article class="chart"><div class="chart-title">平均端到端耗时<span>秒 · 越低越好</span></div><svg viewBox="0 0 970 210" role="img" aria-label="平均端到端耗时"><line x1="215.0" y1="10" x2="215.0" y2="174" class="gridline"/><text x="215.0" y="197" class="axis" text-anchor="middle">0.00</text><line x1="377.5" y1="10" x2="377.5" y2="174" class="gridline"/><text x="377.5" y="197" class="axis" text-anchor="middle">3.82</text><line x1="540.0" y1="10" x2="540.0" y2="174" class="gridline"/><text x="540.0" y="197" class="axis" text-anchor="middle">7.63</text><line x1="702.5" y1="10" x2="702.5" y2="174" class="gridline"/><text x="702.5" y="197" class="axis" text-anchor="middle">11.45</text><line x1="865.0" y1="10" x2="865.0" y2="174" class="gridline"/><text x="865.0" y="197" class="axis" text-anchor="middle">15.26</text><text x="0" y="45" class="bar-label">不接LMCache</text><rect x="215" y="23" width="550.8474576271187" height="31" rx="3" fill="#5374aa"/><text x="774.8474576271187" y="45" class="bar-value">12.9325</text><text x="0" y="100" class="bar-label">原异步ON</text><rect x="215" y="78" width="534.4233905190167" height="31" rx="3" fill="#bb8539"/><text x="758.4233905190167" y="100" class="bar-value">12.5470</text><text x="0" y="155" class="bar-label">同步＋提前读取ON</text><rect x="215" y="133" width="532.2841197257485" height="31" rx="3" fill="#31806c"/><text x="756.2841197257485" y="155" class="bar-value">12.4967</text></svg></article><h3>同一指标，换算成改善百分比</h3><p>下表是均值降幅：正数为改善，负数为变慢。先看接入前后，再看修改能否改善接入后的结果。</p><div class="table-wrap "><table><thead><tr><th>均值降幅</th><th>原异步ON vs OFF</th><th>组合优化ON vs OFF</th><th>组合优化ON vs 原异步ON</th></tr></thead><tbody><tr><th>平均TTFT</th><td><span class="good">+19.31%</span></td><td><span class="good">+17.84%</span></td><td><span class="bad">-1.83%</span></td></tr><tr><th>平均TPOT</th><td><span class="good">+0.61%</span></td><td><span class="good">+1.25%</span></td><td><span class="good">+0.64%</span></td></tr><tr><th>平均端到端耗时</th><td><span class="good">+2.98%</span></td><td><span class="good">+3.37%</span></td><td><span class="good">+0.40%</span></td></tr></tbody></table></div></section>
+<section id="metrics"><div class="section-number">02</div><h2>指标为行，用例为列</h2><div class="table-wrap "><table><thead><tr><th>用例</th><th>正式结果</th><th>对齐状态</th></tr></thead><tbody><tr><th>不接LMCache</th><td>389／389</td><td>ALIGNED_389_C4</td></tr><tr><th>原异步ON</th><td>389／389</td><td>ALIGNED_389_C4</td></tr><tr><th>同步＋提前读取ON</th><td>389／389</td><td>ALIGNED_389_C4</td></tr></tbody></table></div><div class="table-wrap "><table><thead><tr><th>指标</th><th>不接LMCache</th><th>原异步ON</th><th>同步＋提前读取ON</th></tr></thead><tbody><tr><th>正式请求数</th><td>389</td><td>389</td><td>389</td></tr><tr><th>成功请求数</th><td>389</td><td>389</td><td>389</td></tr><tr><th>失败请求数</th><td>0</td><td>0</td><td>0</td></tr><tr><th>指定并发C</th><td>4</td><td>4</td><td>4</td></tr><tr><th>正式持续时间（秒）</th><td>1,265.6014</td><td>1,230.1531</td><td>1,222.2157</td></tr><tr><th>输入总token</th><td>3,907,699</td><td>3,907,699</td><td>3,907,699</td></tr><tr><th>平均输入token</th><td>10,045.4987</td><td>10,045.4987</td><td>10,045.4987</td></tr><tr><th>输出总token</th><td>191,207</td><td>191,207</td><td>191,207</td></tr><tr><th>平均输出token</th><td>491.5347</td><td>491.5347</td><td>491.5347</td></tr><tr><th>平均TTFT（秒）</th><td>1.7081</td><td>1.3782</td><td>1.4034</td></tr><tr><th>中位TTFT（秒）</th><td>1.2591</td><td>1.2686</td><td>1.2157</td></tr><tr><th>P95TTFT（秒）</th><td>3.7569</td><td>2.6675</td><td>2.5376</td></tr><tr><th>P99TTFT（秒）</th><td>4.9076</td><td>3.2593</td><td>3.2485</td></tr><tr><th>平均TPOT（毫秒）</th><td>23.0687</td><td>22.9286</td><td>22.7809</td></tr><tr><th>中位TPOT（毫秒）</th><td>22.7176</td><td>22.6556</td><td>22.5345</td></tr><tr><th>P95TPOT（毫秒）</th><td>28.4099</td><td>27.7349</td><td>27.6459</td></tr><tr><th>P99TPOT（毫秒）</th><td>30.0663</td><td>30.5142</td><td>29.2309</td></tr><tr><th>平均端到端耗时（秒）</th><td>12.9325</td><td>12.5470</td><td>12.4967</td></tr><tr><th>中位端到端耗时（秒）</th><td>12.5886</td><td>12.1647</td><td>11.9821</td></tr><tr><th>P95端到端耗时（秒）</th><td>21.6505</td><td>21.0863</td><td>20.5620</td></tr><tr><th>P99端到端耗时（秒）</th><td>23.6445</td><td>22.7883</td><td>22.7813</td></tr><tr><th>平均流块ITL（毫秒）</th><td>67.0656</td><td>67.0894</td><td>67.0955</td></tr><tr><th>中位流块ITL（毫秒）</th><td>67.1539</td><td>67.1745</td><td>67.1880</td></tr><tr><th>P95流块ITL（毫秒）</th><td>68.6405</td><td>68.6611</td><td>68.6754</td></tr><tr><th>P99流块ITL（毫秒）</th><td>70.6065</td><td>70.6287</td><td>70.4795</td></tr><tr><th>请求吞吐（req/s）</th><td>0.3074</td><td>0.3162</td><td>0.3183</td></tr><tr><th>输出吞吐（token/s）</th><td>151.0800</td><td>155.4335</td><td>156.4429</td></tr><tr><th>输入＋输出吞吐（token/s）</th><td>3,238.7021</td><td>3,332.0293</td><td>3,353.6684</td></tr><tr><th>秒桶覆盖请求峰值（非配置并发）</th><td>7</td><td>7</td><td>7</td></tr></tbody></table></div><h3>服务端阶段与缓存计数</h3><p class="path">补充来源：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\分析\正式三组对照\三组最终\服务端三组汇总.json</p><div class="table-wrap "><table><thead><tr><th>服务端指标</th><th>不接LMCache</th><th>原异步ON</th><th>同步＋提前读取ON</th></tr></thead><tbody><tr><th>P 外部命中token／查询token（%）</th><td>0.0000</td><td>65.3545</td><td>65.2759</td></tr><tr><th>P 外部命中token总数</th><td>0.0000</td><td>2,553,856.0000</td><td>2,550,784.0000</td></tr><tr><th>P 外部查询token总数</th><td>3,907,699.0000</td><td>3,907,699.0000</td><td>3,907,699.0000</td></tr><tr><th>P 本轮新计算KV（token总数）</th><td>3,907,699.0000</td><td>1,353,843.0000</td><td>1,356,915.0000</td></tr><tr><th>P 每请求新计算KV（token）</th><td>10,045.4987</td><td>3,480.3162</td><td>3,488.2134</td></tr><tr><th>P 首次WAITING排队均值（秒）</th><td>0.0119</td><td>0.1814</td><td>0.0158</td></tr><tr><th>P Prefill阶段均值（秒，含等待）</th><td>1.0720</td><td>0.6589</td><td>0.7605</td></tr><tr><th>P 服务端TTFT均值（秒）</th><td>1.2325</td><td>0.9338</td><td>0.8947</td></tr><tr><th>P 抢占次数增量</th><td>0.0000</td><td>0.0000</td><td>0.0000</td></tr><tr><th>D Mooncake外部命中／查询（%）</th><td>100.0000</td><td>100.0000</td><td>100.0000</td></tr><tr><th>D Mooncake命中token总数</th><td>3,907,699.0000</td><td>3,907,699.0000</td><td>3,907,699.0000</td></tr><tr><th>D Mooncake查询token总数</th><td>3,907,699.0000</td><td>3,907,699.0000</td><td>3,907,699.0000</td></tr><tr><th>D 本轮新计算KV（token总数）</th><td>0.0000</td><td>0.0000</td><td>0.0000</td></tr><tr><th>D 每请求新计算KV（token）</th><td>0.0000</td><td>0.0000</td><td>0.0000</td></tr><tr><th>D 加权首次WAITING排队（秒）</th><td>0.2453</td><td>0.2159</td><td>0.2791</td></tr><tr><th>D 加权Prefill阶段（秒，含等待）</th><td>0.1196</td><td>0.1200</td><td>0.1202</td></tr><tr><th>D 加权Decode阶段（秒，含等待）</th><td>11.2361</td><td>11.1806</td><td>11.1051</td></tr><tr><th>D 加权服务端TTFT（秒）</th><td>0.4386</td><td>0.4089</td><td>0.4722</td></tr><tr><th>D 加权服务端TPOT（毫秒）</th><td>23.0997</td><td>22.9601</td><td>22.8122</td></tr><tr><th>D MTP接受token／草拟token（%）</th><td>64.2069</td><td>64.7428</td><td>65.4076</td></tr><tr><th>D MTP每次草拟平均接受token</th><td>1.9262</td><td>1.9423</td><td>1.9622</td></tr><tr><th>D 抢占次数增量</th><td>0.0000</td><td>0.0000</td><td>0.0000</td></tr></tbody></table></div><p class="notice">时间均值＝本轮直方图sum增量／count增量；四D采用统计文件的weighted_D合计，再除以总count，并非四个接口均值的简单平均。Prefill／Decode是当前版本定义的服务端阶段，包含等待；不将P＋D Prefill相加解释成纯算子或纯设备计算。D外部命中表示Mooncake接收P侧KV，不是D的LMCache命中率。</p><details><summary>服务端增量来源（未验证字段不补零）</summary><p class="path">不接LMCache：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\分析\正式三组对照\服务端_OFF48\服务端增量.json</p><p class="path">P 18100<br>before：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\off\m8-20261024-205121-105499\stages\off\metrics\20261024-122506-537768-before-18100.prom<br>after：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\off\m8-20261024-205121-105499\stages\off\metrics\20261024-124825-587983-after-18100.prom</p><p class="path">D 18200<br>before：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\off\m12-20261024-205121-105499\stages\off\metrics\20261024-122512-521456-before-18200.prom<br>after：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\off\m12-20261024-205121-105499\stages\off\metrics\20261024-124831-992474-after-18200.prom</p><p class="path">D 18201<br>before：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\off\m12-20261024-205121-105499\stages\off\metrics\20261024-122512-529872-before-18201.prom<br>after：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\off\m12-20261024-205121-105499\stages\off\metrics\20261024-124832-001774-after-18201.prom</p><p class="path">D 18202<br>before：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\off\m12-20261024-205121-105499\stages\off\metrics\20261024-122512-537584-before-18202.prom<br>after：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\off\m12-20261024-205121-105499\stages\off\metrics\20261024-124832-011273-after-18202.prom</p><p class="path">D 18203<br>before：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\off\m12-20261024-205121-105499\stages\off\metrics\20261024-122512-544845-before-18203.prom<br>after：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\off\m12-20261024-205121-105499\stages\off\metrics\20261024-124832-019971-after-18203.prom</p><p class="path">原异步ON：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\分析\正式三组对照\服务端_异步ON48复跑\服务端增量.json</p><p class="path">P 18100<br>before：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-async\m8-20261024-214954-949899\stages\on-async\metrics\20261024-132447-326864-before-repeat2-18100.prom<br>after：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-async\m8-20261024-214954-949899\stages\on-async\metrics\20261024-134731-960328-after-repeat2-18100.prom</p><p class="path">D 18200<br>before：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-async\m12-20261024-214936-092545\stages\on-async\metrics\20261024-132456-501125-before-repeat2-18200.prom<br>after：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-async\m12-20261024-214936-092545\stages\on-async\metrics\20261024-134742-125229-after-repeat2-18200.prom</p><p class="path">D 18201<br>before：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-async\m12-20261024-214936-092545\stages\on-async\metrics\20261024-132456-509343-before-repeat2-18201.prom<br>after：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-async\m12-20261024-214936-092545\stages\on-async\metrics\20261024-134742-133976-after-repeat2-18201.prom</p><p class="path">D 18202<br>before：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-async\m12-20261024-214936-092545\stages\on-async\metrics\20261024-132456-517036-before-repeat2-18202.prom<br>after：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-async\m12-20261024-214936-092545\stages\on-async\metrics\20261024-134742-142692-after-repeat2-18202.prom</p><p class="path">D 18203<br>before：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-async\m12-20261024-214936-092545\stages\on-async\metrics\20261024-132456-524773-before-repeat2-18203.prom<br>after：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-async\m12-20261024-214936-092545\stages\on-async\metrics\20261024-134742-150991-after-repeat2-18203.prom</p><p class="path">同步＋提前读取ON：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\分析\正式三组对照\服务端_优化ON48\服务端增量.json</p><p class="path">P 18100<br>before：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-sync-prefetch\m8-20261024-221939-473028\stages\on-sync-prefetch\metrics\20261024-135623-802505-before-18100.prom<br>after：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-sync-prefetch\m8-20261024-221939-473028\stages\on-sync-prefetch\metrics\20261024-141845-283712-after-18100.prom</p><p class="path">D 18200<br>before：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-sync-prefetch\m12-20261024-221854-787975\stages\on-sync-prefetch\metrics\20261024-135632-486622-before-18200.prom<br>after：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-sync-prefetch\m12-20261024-221854-787975\stages\on-sync-prefetch\metrics\20261024-141853-485874-after-18200.prom</p><p class="path">D 18201<br>before：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-sync-prefetch\m12-20261024-221854-787975\stages\on-sync-prefetch\metrics\20261024-135632-495137-before-18201.prom<br>after：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-sync-prefetch\m12-20261024-221854-787975\stages\on-sync-prefetch\metrics\20261024-141853-495227-after-18201.prom</p><p class="path">D 18202<br>before：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-sync-prefetch\m12-20261024-221854-787975\stages\on-sync-prefetch\metrics\20261024-135632-504485-before-18202.prom<br>after：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-sync-prefetch\m12-20261024-221854-787975\stages\on-sync-prefetch\metrics\20261024-141853-505178-after-18202.prom</p><p class="path">D 18203<br>before：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-sync-prefetch\m12-20261024-221854-787975\stages\on-sync-prefetch\metrics\20261024-135632-513148-before-18203.prom<br>after：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-sync-prefetch\m12-20261024-221854-787975\stages\on-sync-prefetch\metrics\20261024-141853-513465-after-18203.prom</p></details></section>
+<section id="setup"><div class="section-number">03</div><h2>这轮可以比较什么</h2><p>可验证的问题：在同一客户原文序列和计算形态下，P接入LMCache后，TTFT、TPOT和端到端耗时如何变化；组合修改是否改善原异步ON。</p><div class="table-wrap "><table><thead><tr><th>条件</th><th>三组共同保持</th></tr></thead><tbody><tr><th>客户数据</th><td>原500条中按GLM输入＋原输出≤49152保留389条（77.8%），原文、原序及逐条输出不改</td></tr><tr><th>压测</th><td>C4，预热0，seed=0，逐条原输出100—891 token，禁补采样</td></tr><tr><th>P</th><td>DP1／TP8／PP2，41,37层，DSA CP=true，MTP3；49152／0.94；batch16384</td></tr><tr><th>D</th><td>DP4／TP4／PP1，MTP3；65536／0.92＋显式KV4.5 GiB，四D持续保留</td></tr><tr><th>传输与缓存</th><td>P→D原Mooncake；APC关闭；共同常驻12 GiB LMCache，OFF的Connector不调用它</td></tr><tr><th>源码与观测</th><td>既有17行适配、pin及共同观测保留；原私有runtime／venv，未叠加vLLM提前通知候选</td></tr></tbody></table></div><h3>三组只保留这些接入差异</h3><div class="table-wrap "><table><thead><tr><th>差异</th><th>不接LMCache</th><th>原异步ON</th><th>同步＋提前读取ON</th></tr></thead><tbody><tr><th>P Connector</th><td>Mooncake</td><td>Multi：Mooncake＋LMCache MP</td><td>同原异步ON</td></tr><tr><th>同步恢复开关</th><td>不适用</td><td>不设置</td><td>true</td></tr><tr><th>后段提前READ开关</th><td>不适用</td><td>不设置</td><td>true</td></tr><tr><th>P导入顺序</th><td>baseline</td><td>baseline</td><td>prefetch→poll→baseline</td></tr></tbody></table></div><p class="notice">D继续64K／4.5 GiB，未执行预备48K D／3.5 GiB；较大的D上限不改变客户请求的实际长度。服务条件来自launch／观测证据，benchmark JSON本身不能证明全部服务状态。</p></section>
+<section id="interpretation"><div class="section-number">04</div><h2>如何解释变化，哪些仍不能归因</h2><p><b>TTFT均值与中位数出现不同方向。</b>优化相对原异步：平均TTFT变慢1.83%，中位数改善4.17%。最大差值请求仍保留在389条主表中，不能剔除后宣称正式成绩改善。</p><div class="table-wrap "><table><thead><tr><th>TTFT差值拆账（秒）</th><th>原异步</th><th>优化</th><th>优化−异步</th></tr></thead><tbody><tr><th>客户原行57，输入2263／原输出224</th><td>0.944099</td><td>12.562491</td><td>+11.618392</td></tr><tr><th>其他388条合计</th><td>—</td><td>—</td><td>-1.825701</td></tr><tr><th>完整389条净差合计</th><td>—</td><td>—</td><td>+9.792691</td></tr></tbody></table></div><p>这条请求贡献净变慢总量的118.64%；其他请求合计抵消了一部分。这是完整数据的差值拆账，<b>不剔除该条，也不重定义正式成绩</b>。</p><p><b>长尾的直接异常链现已确认在P→D传输连接建立。</b>P从lookup到最终结果更新仅约0.525秒；D0／TP0的一份同步读取窗口为11637.32毫秒，出现HCCL申请659456字节设备内存失败→连接等待10000毫秒超时→内部重试成功。这个窗口包含连接与重试，不是纯KV字节搬运；请求最后成功仍可能已拖慢首token。</p><p><b>仍为NOT_VERIFIED：</b>哪一端的设备余量、容量参数、碎片或通道资源导致申请失败。不能把D的4.5 GiB KV池写成已证实根因，也不能宣称候选与资源时序完全无关。<a href="../分析/优化ON_原行57极慢请求.md">最新请求链、原始日志与HCCL证据</a>；<a href="../分析/正式三组对照/三组最终/优化TTFT离群解析.md">离群数值拆账（原因以最新定位为准）</a>。</p><h3>为什么本轮收益与旧4K用例不同</h3><p>旧4K四并发是合成random数据：每条4096输入／256输出、正式32条，已全前缀命中但仍计算最后1token；本轮是389条客户原文，输入261—48030、均值约10045，原异步实测token命中65.3545%，平均仍新算约3480token。长输入省掉的处理更多，客户2—4K分桶仍略慢、长输入分桶改善明显，因此整体转正不表示旧等待机制消失。旧OFF与ON还存在跨日、跨机器和源码／观测差异，只能作为历史参考；<a href="../分析/新旧用例差异_来源核对.md">新旧用例来源与可比边界</a>。</p><h3>阶段计时不能直接当作纯计算拆账</h3><p><b>同步恢复会改变排队与Prefill的计时归属。</b>异步路径先以远程KV等待状态停留；同步路径先记入执行安排，再在worker中等待恢复。因此queue下降不等于全部节省了完成通知等待，Prefill上升也不等于算子变慢。</p><p>现有trace证明后段READ已在PP接收前提交，后续复用同一future。单条部分命中样本的PP接收约311毫秒，<b>不是净节省311毫秒</b>；缺少同请求同批状态重放及缓存端设备完成关联。<a href="../分析/优化ON_生效与计时边界.md">候选生效、统计公式与源码行号</a>。</p><p><b>原异步ON相对OFF已观察到：</b>P Prefill阶段减少413.1毫秒、P首次WAITING排队增加169.5毫秒、P服务端TTFT减少298.8毫秒，P实际外部token命中率65.3545%。这些是各自边界的墙钟统计，不能简单相加拆成纯计算、纯搬运或通知等待。</p><p><b>D侧：</b>D Decode阶段降低0.49%、D服务端TPOT降低0.60%、MTP接受率提高0.536个百分点。方向一致可作为解释线索，尚未证明因果；请求抵达节奏与批次组成也可能影响这些值。</p><p><b>输出全文精度尚未验收。</b>OFF64与OFF48共有389条原请求也仅13条全文完全一致。因此ON全文不同不能孤立判为缓存错误；这同样不能证明ON正确或排除缓存问题。<a href="../分析/输出文本一致性边界.md">输出文本一致性参考边界</a>。</p><p class="notice"><b>补验不替代主对照：</b>22:31启动的优化同P、整轮空缓存repeat2独立保存；后续P profiler拟采客户原行36的cold／warm，经正常代理由D消费。本页仍使用已完成原三组及其metrics，尚未接入补验结果，不预填补验数值。</p></section>
+<section id="repro"><div class="section-number">05</div><h2>可折叠的完整原生复现</h2><p>以下为完整原生服务／benchmark参数及环境。它们是复现资料；打开报告不会启动任务，也不要求重启常驻D与缓存。</p><details><summary>P · 不接LMCache</summary><p class="path">来源：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\实际验证配置\p\off.env.native.sh<br>E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\实际验证配置\p\off.serve.native.sh</p><h4>环境变量与工作目录</h4><pre><code><span class="syn-keyword">export</span> KS_MP=/opt/ks-<span class="syn-keyword">lmcache</span>-stage2/official-mp-v0.<span class="syn-number">5</span>.6rc5
+<span class="syn-keyword">export</span> KS_WORK_HOME=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/cache/pp2/home
+<span class="syn-keyword">export</span> TMPDIR=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/off/tmp/p
+<span class="syn-keyword">export</span> XDG_CACHE_HOME=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/cache/pp2/xdg
+<span class="syn-keyword">export</span> HF_HOME=<span class="syn-string">&quot;$XDG_CACHE_HOME/huggingface&quot;</span>
+<span class="syn-keyword">export</span> HF_HUB_CACHE=<span class="syn-string">&quot;$HF_HOME/hub&quot;</span>
+<span class="syn-keyword">export</span> HUGGINGFACE_HUB_CACHE=<span class="syn-string">&quot;$HF_HUB_CACHE&quot;</span>
+<span class="syn-keyword">export</span> HF_DATASETS_CACHE=<span class="syn-string">&quot;$HF_HOME/datasets&quot;</span>
+<span class="syn-keyword">export</span> TORCH_HOME=<span class="syn-string">&quot;$XDG_CACHE_HOME/torch&quot;</span>
+<span class="syn-keyword">export</span> VLLM_CACHE_ROOT=<span class="syn-string">&quot;$XDG_CACHE_HOME/vllm&quot;</span>
+<span class="syn-keyword">unset</span> TRANSFORMERS_CACHE
+<span class="syn-keyword">export</span> PATH=<span class="syn-string">&quot;$KS_MP/venv/bin:$PATH&quot;</span>
+<span class="syn-keyword">export</span> PYTHONPATH=<span class="syn-string">&quot;/opt/ks-night-luv-20261023/runtime/baseline:$KS_MP/LMCache-Ascend-official-v0.5.6rc5:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe&quot;</span>
+<span class="syn-keyword">export</span> PYTHONDONTWRITEBYTECODE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> LMCACHE_TRACK_USAGE=false
+<span class="syn-keyword">unset</span> TORCH_DEVICE_BACKEND_AUTOLOAD LMCACHE_CONFIG_FILE
+<span class="syn-keyword">export</span> ASCEND_RT_VISIBLE_DEVICES=<span class="syn-number">0</span>,<span class="syn-number">1</span>,<span class="syn-number">2</span>,<span class="syn-number">3</span>,<span class="syn-number">4</span>,<span class="syn-number">5</span>,<span class="syn-number">6</span>,<span class="syn-number">7</span>,<span class="syn-number">8</span>,<span class="syn-number">9</span>,<span class="syn-number">10</span>,<span class="syn-number">11</span>,<span class="syn-number">12</span>,<span class="syn-number">13</span>,<span class="syn-number">14</span>,<span class="syn-number">15</span>
+<span class="syn-keyword">export</span> PYTHONHASHSEED=<span class="syn-number">0</span> TE_PARALLEL_COMPILER=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> LD_LIBRARY_PATH=<span class="syn-string">&quot;${LD_LIBRARY_PATH:-}:/usr/local/lib&quot;</span>
+<span class="syn-keyword">export</span> VLLM_ASCEND_ENABLE_FUSED_MC2=<span class="syn-number">1</span> HCCL_OP_EXPANSION_MODE=AIV
+<span class="syn-keyword">export</span> HCCL_IF_IP=<span class="syn-number">192.168</span>.<span class="syn-number">0.110</span> HCCL_NPU_SOCKET_PORT_RANGE=auto
+<span class="syn-keyword">export</span> GLOO_SOCKET_IFNAME=enp23s0f3 TP_SOCKET_IFNAME=enp23s0f3 HCCL_SOCKET_IFNAME=enp23s0f3
+<span class="syn-keyword">export</span> OMP_PROC_BIND=false OMP_NUM_THREADS=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> PYTORCH_NPU_ALLOC_CONF=expandable_segments:False HCCL_BUFFSIZE=<span class="syn-number">400</span>
+<span class="syn-keyword">export</span> ACL_OP_INIT_MODE=<span class="syn-number">1</span> ASCEND_A3_ENABLE=<span class="syn-number">1</span> VLLM_ASCEND_ENABLE_FLASHCOMM1=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> VLLM_PP_LAYER_PARTITION=<span class="syn-number">41</span>,<span class="syn-number">37</span>
+<span class="syn-keyword">export</span> KS_TTFT_TRACE_DIR=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/off/traces
+mkdir -p /opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/off/work/p <span class="syn-string">&quot;$KS_WORK_HOME&quot;</span> <span class="syn-string">&quot;$TMPDIR&quot;</span> <span class="syn-string">&quot;$XDG_CACHE_HOME&quot;</span> <span class="syn-string">&quot;$KS_TTFT_TRACE_DIR&quot;</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/off/profiles
+<span class="syn-keyword">cd</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/off/work/p</code></pre><h4>原生命令</h4><pre><code><span class="syn-keyword">source</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/native-drafts/p/off.env.native.sh
+<span class="syn-keyword">vllm</span> serve /mnt/sdb/models/GLM-<span class="syn-number">5.1</span>-w8a8c8-MTP \
+  <span class="syn-flag">--host</span> <span class="syn-number">0.0</span>.<span class="syn-number">0.0</span> \
+  <span class="syn-flag">--port</span> <span class="syn-number">18100</span> \
+  <span class="syn-flag">--tensor-parallel-size</span> <span class="syn-number">8</span> \
+  <span class="syn-flag">--pipeline-parallel-size</span> <span class="syn-number">2</span> \
+  <span class="syn-flag">--enable-expert-parallel</span> \
+  <span class="syn-flag">--distributed-executor-backend</span> mp \
+  <span class="syn-flag">--master-addr</span> <span class="syn-number">127.0</span>.<span class="syn-number">0.1</span> \
+  <span class="syn-flag">--master-port</span> <span class="syn-number">18190</span> \
+  <span class="syn-flag">--nnodes</span> <span class="syn-number">1</span> \
+  <span class="syn-flag">--node-rank</span> <span class="syn-number">0</span> \
+  <span class="syn-flag">--hf-overrides</span> <span class="syn-string">&#x27;{&quot;use_index_cache&quot;:true,&quot;index_topk_freq&quot;:4}&#x27;</span> \
+  <span class="syn-flag">--speculative-config</span> <span class="syn-string">&#x27;{&quot;num_speculative_tokens&quot;:3,&quot;method&quot;:&quot;deepseek_mtp&quot;,&quot;enforce_eager&quot;:true}&#x27;</span> \
+  <span class="syn-flag">--seed</span> <span class="syn-number">1024</span> \
+  <span class="syn-flag">--served-model-name</span> glm-<span class="syn-number">5</span> \
+  <span class="syn-flag">--max-model-len</span> <span class="syn-number">49152</span> \
+  <span class="syn-flag">--additional-config</span> <span class="syn-string">&#x27;{&quot;fuse_muls_add&quot;:true,&quot;recompute_scheduler_enable&quot;:false,&quot;multistream_overlap_shared_expert&quot;:true,&quot;enable_dsa_cp&quot;:true,&quot;enable_sparse_sfa_c8&quot;:true,&quot;enable_sparse_li_c8&quot;:true,&quot;c8_enable_reshape_optim&quot;:true}&#x27;</span> \
+  <span class="syn-flag">--max-num-batched-tokens</span> <span class="syn-number">16384</span> \
+  <span class="syn-flag">--max-num-seqs</span> <span class="syn-number">64</span> \
+  <span class="syn-flag">--trust-remote-code</span> \
+  <span class="syn-flag">--no-enable-prefix-caching</span> \
+  <span class="syn-flag">--quantization</span> ascend \
+  <span class="syn-flag">--gpu-memory-utilization</span> <span class="syn-number">0.94</span> \
+  <span class="syn-flag">--enforce-eager</span> \
+  <span class="syn-flag">--enable-auto-tool-choice</span> \
+  <span class="syn-flag">--tool-call-parser</span> glm47 \
+  <span class="syn-flag">--reasoning-parser</span> glm45 \
+  <span class="syn-flag">--kv-transfer-config</span> <span class="syn-string">&#x27;{&quot;kv_connector&quot;:&quot;MooncakeConnectorV1&quot;,&quot;kv_role&quot;:&quot;kv_producer&quot;,&quot;kv_port&quot;:&quot;28000&quot;,&quot;engine_id&quot;:&quot;ks-p-p1d1-pp2&quot;,&quot;kv_connector_extra_config&quot;:{&quot;use_ascend_direct&quot;:true,&quot;prefill&quot;:{&quot;dp_size&quot;:1,&quot;tp_size&quot;:8,&quot;pp_size&quot;:2,&quot;pp_layer_partition&quot;:&quot;41,37&quot;},&quot;decode&quot;:{&quot;dp_size&quot;:4,&quot;tp_size&quot;:4,&quot;pp_size&quot;:1}}}&#x27;</span> \
+  <span class="syn-flag">--profiler-config</span> <span class="syn-string">&#x27;{&quot;profiler&quot;:&quot;torch&quot;,&quot;torch_profiler_dir&quot;:&quot;/opt/ks-customer-bench-20261024/stages/off/profiles&quot;,&quot;ignore_frontend&quot;:true,&quot;torch_profiler_with_stack&quot;:false,&quot;torch_profiler_with_memory&quot;:false,&quot;torch_profiler_record_shapes&quot;:false,&quot;torch_profiler_with_flops&quot;:false,&quot;delay_iterations&quot;:0,&quot;max_iterations&quot;:0}&#x27;</span></code></pre></details><details><summary>P · 原异步ON</summary><p class="path">来源：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\实际验证配置\p\on-async.env.native.sh<br>E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\实际验证配置\p\on-async.serve.native.sh</p><h4>环境变量与工作目录</h4><pre><code><span class="syn-keyword">export</span> KS_MP=/opt/ks-<span class="syn-keyword">lmcache</span>-stage2/official-mp-v0.<span class="syn-number">5</span>.6rc5
+<span class="syn-keyword">export</span> KS_WORK_HOME=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/cache/pp2/home
+<span class="syn-keyword">export</span> TMPDIR=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/on-async/tmp/p
+<span class="syn-keyword">export</span> XDG_CACHE_HOME=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/cache/pp2/xdg
+<span class="syn-keyword">export</span> HF_HOME=<span class="syn-string">&quot;$XDG_CACHE_HOME/huggingface&quot;</span>
+<span class="syn-keyword">export</span> HF_HUB_CACHE=<span class="syn-string">&quot;$HF_HOME/hub&quot;</span>
+<span class="syn-keyword">export</span> HUGGINGFACE_HUB_CACHE=<span class="syn-string">&quot;$HF_HUB_CACHE&quot;</span>
+<span class="syn-keyword">export</span> HF_DATASETS_CACHE=<span class="syn-string">&quot;$HF_HOME/datasets&quot;</span>
+<span class="syn-keyword">export</span> TORCH_HOME=<span class="syn-string">&quot;$XDG_CACHE_HOME/torch&quot;</span>
+<span class="syn-keyword">export</span> VLLM_CACHE_ROOT=<span class="syn-string">&quot;$XDG_CACHE_HOME/vllm&quot;</span>
+<span class="syn-keyword">unset</span> TRANSFORMERS_CACHE
+<span class="syn-keyword">export</span> PATH=<span class="syn-string">&quot;$KS_MP/venv/bin:$PATH&quot;</span>
+<span class="syn-keyword">export</span> PYTHONPATH=<span class="syn-string">&quot;/opt/ks-night-luv-20261023/runtime/baseline:$KS_MP/LMCache-Ascend-official-v0.5.6rc5:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe&quot;</span>
+<span class="syn-keyword">export</span> PYTHONDONTWRITEBYTECODE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> LMCACHE_TRACK_USAGE=false
+<span class="syn-keyword">unset</span> TORCH_DEVICE_BACKEND_AUTOLOAD LMCACHE_CONFIG_FILE
+<span class="syn-keyword">export</span> ASCEND_RT_VISIBLE_DEVICES=<span class="syn-number">0</span>,<span class="syn-number">1</span>,<span class="syn-number">2</span>,<span class="syn-number">3</span>,<span class="syn-number">4</span>,<span class="syn-number">5</span>,<span class="syn-number">6</span>,<span class="syn-number">7</span>,<span class="syn-number">8</span>,<span class="syn-number">9</span>,<span class="syn-number">10</span>,<span class="syn-number">11</span>,<span class="syn-number">12</span>,<span class="syn-number">13</span>,<span class="syn-number">14</span>,<span class="syn-number">15</span>
+<span class="syn-keyword">export</span> PYTHONHASHSEED=<span class="syn-number">0</span> TE_PARALLEL_COMPILER=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> LD_LIBRARY_PATH=<span class="syn-string">&quot;${LD_LIBRARY_PATH:-}:/usr/local/lib&quot;</span>
+<span class="syn-keyword">export</span> VLLM_ASCEND_ENABLE_FUSED_MC2=<span class="syn-number">1</span> HCCL_OP_EXPANSION_MODE=AIV
+<span class="syn-keyword">export</span> HCCL_IF_IP=<span class="syn-number">192.168</span>.<span class="syn-number">0.110</span> HCCL_NPU_SOCKET_PORT_RANGE=auto
+<span class="syn-keyword">export</span> GLOO_SOCKET_IFNAME=enp23s0f3 TP_SOCKET_IFNAME=enp23s0f3 HCCL_SOCKET_IFNAME=enp23s0f3
+<span class="syn-keyword">export</span> OMP_PROC_BIND=false OMP_NUM_THREADS=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> PYTORCH_NPU_ALLOC_CONF=expandable_segments:False HCCL_BUFFSIZE=<span class="syn-number">400</span>
+<span class="syn-keyword">export</span> ACL_OP_INIT_MODE=<span class="syn-number">1</span> ASCEND_A3_ENABLE=<span class="syn-number">1</span> VLLM_ASCEND_ENABLE_FLASHCOMM1=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> VLLM_PP_LAYER_PARTITION=<span class="syn-number">41</span>,<span class="syn-number">37</span>
+<span class="syn-keyword">export</span> KS_TTFT_TRACE_DIR=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/on-async/traces
+mkdir -p /opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/on-async/work/p <span class="syn-string">&quot;$KS_WORK_HOME&quot;</span> <span class="syn-string">&quot;$TMPDIR&quot;</span> <span class="syn-string">&quot;$XDG_CACHE_HOME&quot;</span> <span class="syn-string">&quot;$KS_TTFT_TRACE_DIR&quot;</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/on-async/profiles
+<span class="syn-keyword">cd</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/on-async/work/p</code></pre><h4>原生命令</h4><pre><code><span class="syn-keyword">source</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/native-drafts/p/on-async.env.native.sh
+<span class="syn-keyword">vllm</span> serve /mnt/sdb/models/GLM-<span class="syn-number">5.1</span>-w8a8c8-MTP \
+  <span class="syn-flag">--host</span> <span class="syn-number">0.0</span>.<span class="syn-number">0.0</span> \
+  <span class="syn-flag">--port</span> <span class="syn-number">18100</span> \
+  <span class="syn-flag">--tensor-parallel-size</span> <span class="syn-number">8</span> \
+  <span class="syn-flag">--pipeline-parallel-size</span> <span class="syn-number">2</span> \
+  <span class="syn-flag">--enable-expert-parallel</span> \
+  <span class="syn-flag">--distributed-executor-backend</span> mp \
+  <span class="syn-flag">--master-addr</span> <span class="syn-number">127.0</span>.<span class="syn-number">0.1</span> \
+  <span class="syn-flag">--master-port</span> <span class="syn-number">18190</span> \
+  <span class="syn-flag">--nnodes</span> <span class="syn-number">1</span> \
+  <span class="syn-flag">--node-rank</span> <span class="syn-number">0</span> \
+  <span class="syn-flag">--hf-overrides</span> <span class="syn-string">&#x27;{&quot;use_index_cache&quot;:true,&quot;index_topk_freq&quot;:4}&#x27;</span> \
+  <span class="syn-flag">--speculative-config</span> <span class="syn-string">&#x27;{&quot;num_speculative_tokens&quot;:3,&quot;method&quot;:&quot;deepseek_mtp&quot;,&quot;enforce_eager&quot;:true}&#x27;</span> \
+  <span class="syn-flag">--seed</span> <span class="syn-number">1024</span> \
+  <span class="syn-flag">--served-model-name</span> glm-<span class="syn-number">5</span> \
+  <span class="syn-flag">--max-model-len</span> <span class="syn-number">49152</span> \
+  <span class="syn-flag">--additional-config</span> <span class="syn-string">&#x27;{&quot;fuse_muls_add&quot;:true,&quot;recompute_scheduler_enable&quot;:false,&quot;multistream_overlap_shared_expert&quot;:true,&quot;enable_dsa_cp&quot;:true,&quot;enable_sparse_sfa_c8&quot;:true,&quot;enable_sparse_li_c8&quot;:true,&quot;c8_enable_reshape_optim&quot;:true}&#x27;</span> \
+  <span class="syn-flag">--max-num-batched-tokens</span> <span class="syn-number">16384</span> \
+  <span class="syn-flag">--max-num-seqs</span> <span class="syn-number">64</span> \
+  <span class="syn-flag">--trust-remote-code</span> \
+  <span class="syn-flag">--no-enable-prefix-caching</span> \
+  <span class="syn-flag">--quantization</span> ascend \
+  <span class="syn-flag">--gpu-memory-utilization</span> <span class="syn-number">0.94</span> \
+  <span class="syn-flag">--enforce-eager</span> \
+  <span class="syn-flag">--enable-auto-tool-choice</span> \
+  <span class="syn-flag">--tool-call-parser</span> glm47 \
+  <span class="syn-flag">--reasoning-parser</span> glm45 \
+  <span class="syn-flag">--kv-transfer-config</span> <span class="syn-string">&#x27;{&quot;kv_role&quot;:&quot;kv_producer&quot;,&quot;kv_port&quot;:&quot;28000&quot;,&quot;engine_id&quot;:&quot;ks-p-p1d1-pp2&quot;,&quot;kv_connector&quot;:&quot;MultiConnector&quot;,&quot;kv_connector_extra_config&quot;:{&quot;connectors&quot;:[{&quot;kv_connector&quot;:&quot;MooncakeConnectorV1&quot;,&quot;kv_role&quot;:&quot;kv_producer&quot;,&quot;kv_port&quot;:&quot;28000&quot;,&quot;kv_connector_extra_config&quot;:{&quot;use_ascend_direct&quot;:true,&quot;prefill&quot;:{&quot;dp_size&quot;:1,&quot;tp_size&quot;:8,&quot;pp_size&quot;:2,&quot;pp_layer_partition&quot;:&quot;41,37&quot;},&quot;decode&quot;:{&quot;dp_size&quot;:4,&quot;tp_size&quot;:4,&quot;pp_size&quot;:1}}},{&quot;kv_connector&quot;:&quot;LMCacheMPConnector&quot;,&quot;kv_role&quot;:&quot;kv_producer&quot;,&quot;kv_connector_module_path&quot;:&quot;lmcache.integration.vllm.lmcache_mp_connector&quot;,&quot;kv_connector_extra_config&quot;:{&quot;lmcache.mp.host&quot;:&quot;tcp://127.0.0.1&quot;,&quot;lmcache.mp.port&quot;:5565,&quot;lmcache.mp.autostart&quot;:false,&quot;lmcache.mp.nonblocking_lookup_status&quot;:false}}]}}&#x27;</span> \
+  <span class="syn-flag">--profiler-config</span> <span class="syn-string">&#x27;{&quot;profiler&quot;:&quot;torch&quot;,&quot;torch_profiler_dir&quot;:&quot;/opt/ks-customer-bench-20261024/stages/on-async/profiles&quot;,&quot;ignore_frontend&quot;:true,&quot;torch_profiler_with_stack&quot;:false,&quot;torch_profiler_with_memory&quot;:false,&quot;torch_profiler_record_shapes&quot;:false,&quot;torch_profiler_with_flops&quot;:false,&quot;delay_iterations&quot;:0,&quot;max_iterations&quot;:0}&#x27;</span></code></pre></details><details><summary>P · 同步＋提前读取ON</summary><p class="path">来源：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\实际验证配置\p\on-sync-prefetch.env.native.sh<br>E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\实际验证配置\p\on-sync-prefetch.serve.native.sh</p><h4>环境变量与工作目录</h4><pre><code><span class="syn-keyword">export</span> KS_MP=/opt/ks-<span class="syn-keyword">lmcache</span>-stage2/official-mp-v0.<span class="syn-number">5</span>.6rc5
+<span class="syn-keyword">export</span> KS_WORK_HOME=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/cache/pp2/home
+<span class="syn-keyword">export</span> TMPDIR=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/on-sync-prefetch/tmp/p
+<span class="syn-keyword">export</span> XDG_CACHE_HOME=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/cache/pp2/xdg
+<span class="syn-keyword">export</span> HF_HOME=<span class="syn-string">&quot;$XDG_CACHE_HOME/huggingface&quot;</span>
+<span class="syn-keyword">export</span> HF_HUB_CACHE=<span class="syn-string">&quot;$HF_HOME/hub&quot;</span>
+<span class="syn-keyword">export</span> HUGGINGFACE_HUB_CACHE=<span class="syn-string">&quot;$HF_HUB_CACHE&quot;</span>
+<span class="syn-keyword">export</span> HF_DATASETS_CACHE=<span class="syn-string">&quot;$HF_HOME/datasets&quot;</span>
+<span class="syn-keyword">export</span> TORCH_HOME=<span class="syn-string">&quot;$XDG_CACHE_HOME/torch&quot;</span>
+<span class="syn-keyword">export</span> VLLM_CACHE_ROOT=<span class="syn-string">&quot;$XDG_CACHE_HOME/vllm&quot;</span>
+<span class="syn-keyword">unset</span> TRANSFORMERS_CACHE
+<span class="syn-keyword">export</span> PATH=<span class="syn-string">&quot;$KS_MP/venv/bin:$PATH&quot;</span>
+<span class="syn-keyword">export</span> PYTHONPATH=<span class="syn-string">&quot;/opt/ks-night-luv-20261023/runtime/prefetch:/opt/ks-night-luv-20261023/runtime/poll:/opt/ks-night-luv-20261023/runtime/baseline:$KS_MP/LMCache-Ascend-official-v0.5.6rc5:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe&quot;</span>
+<span class="syn-keyword">export</span> PYTHONDONTWRITEBYTECODE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> LMCACHE_TRACK_USAGE=false
+<span class="syn-keyword">unset</span> TORCH_DEVICE_BACKEND_AUTOLOAD LMCACHE_CONFIG_FILE
+<span class="syn-keyword">export</span> ASCEND_RT_VISIBLE_DEVICES=<span class="syn-number">0</span>,<span class="syn-number">1</span>,<span class="syn-number">2</span>,<span class="syn-number">3</span>,<span class="syn-number">4</span>,<span class="syn-number">5</span>,<span class="syn-number">6</span>,<span class="syn-number">7</span>,<span class="syn-number">8</span>,<span class="syn-number">9</span>,<span class="syn-number">10</span>,<span class="syn-number">11</span>,<span class="syn-number">12</span>,<span class="syn-number">13</span>,<span class="syn-number">14</span>,<span class="syn-number">15</span>
+<span class="syn-keyword">export</span> PYTHONHASHSEED=<span class="syn-number">0</span> TE_PARALLEL_COMPILER=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> LD_LIBRARY_PATH=<span class="syn-string">&quot;${LD_LIBRARY_PATH:-}:/usr/local/lib&quot;</span>
+<span class="syn-keyword">export</span> VLLM_ASCEND_ENABLE_FUSED_MC2=<span class="syn-number">1</span> HCCL_OP_EXPANSION_MODE=AIV
+<span class="syn-keyword">export</span> HCCL_IF_IP=<span class="syn-number">192.168</span>.<span class="syn-number">0.110</span> HCCL_NPU_SOCKET_PORT_RANGE=auto
+<span class="syn-keyword">export</span> GLOO_SOCKET_IFNAME=enp23s0f3 TP_SOCKET_IFNAME=enp23s0f3 HCCL_SOCKET_IFNAME=enp23s0f3
+<span class="syn-keyword">export</span> OMP_PROC_BIND=false OMP_NUM_THREADS=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> PYTORCH_NPU_ALLOC_CONF=expandable_segments:False HCCL_BUFFSIZE=<span class="syn-number">400</span>
+<span class="syn-keyword">export</span> ACL_OP_INIT_MODE=<span class="syn-number">1</span> ASCEND_A3_ENABLE=<span class="syn-number">1</span> VLLM_ASCEND_ENABLE_FLASHCOMM1=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> VLLM_PP_LAYER_PARTITION=<span class="syn-number">41</span>,<span class="syn-number">37</span>
+<span class="syn-keyword">export</span> KS_TTFT_TRACE_DIR=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/on-sync-prefetch/traces
+mkdir -p /opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/on-sync-prefetch/work/p <span class="syn-string">&quot;$KS_WORK_HOME&quot;</span> <span class="syn-string">&quot;$TMPDIR&quot;</span> <span class="syn-string">&quot;$XDG_CACHE_HOME&quot;</span> <span class="syn-string">&quot;$KS_TTFT_TRACE_DIR&quot;</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/on-sync-prefetch/profiles
+<span class="syn-keyword">cd</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/on-sync-prefetch/work/p</code></pre><h4>原生命令</h4><pre><code><span class="syn-keyword">source</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/native-drafts/p/on-sync-prefetch.env.native.sh
+<span class="syn-keyword">vllm</span> serve /mnt/sdb/models/GLM-<span class="syn-number">5.1</span>-w8a8c8-MTP \
+  <span class="syn-flag">--host</span> <span class="syn-number">0.0</span>.<span class="syn-number">0.0</span> \
+  <span class="syn-flag">--port</span> <span class="syn-number">18100</span> \
+  <span class="syn-flag">--tensor-parallel-size</span> <span class="syn-number">8</span> \
+  <span class="syn-flag">--pipeline-parallel-size</span> <span class="syn-number">2</span> \
+  <span class="syn-flag">--enable-expert-parallel</span> \
+  <span class="syn-flag">--distributed-executor-backend</span> mp \
+  <span class="syn-flag">--master-addr</span> <span class="syn-number">127.0</span>.<span class="syn-number">0.1</span> \
+  <span class="syn-flag">--master-port</span> <span class="syn-number">18190</span> \
+  <span class="syn-flag">--nnodes</span> <span class="syn-number">1</span> \
+  <span class="syn-flag">--node-rank</span> <span class="syn-number">0</span> \
+  <span class="syn-flag">--hf-overrides</span> <span class="syn-string">&#x27;{&quot;use_index_cache&quot;:true,&quot;index_topk_freq&quot;:4}&#x27;</span> \
+  <span class="syn-flag">--speculative-config</span> <span class="syn-string">&#x27;{&quot;num_speculative_tokens&quot;:3,&quot;method&quot;:&quot;deepseek_mtp&quot;,&quot;enforce_eager&quot;:true}&#x27;</span> \
+  <span class="syn-flag">--seed</span> <span class="syn-number">1024</span> \
+  <span class="syn-flag">--served-model-name</span> glm-<span class="syn-number">5</span> \
+  <span class="syn-flag">--max-model-len</span> <span class="syn-number">49152</span> \
+  <span class="syn-flag">--additional-config</span> <span class="syn-string">&#x27;{&quot;fuse_muls_add&quot;:true,&quot;recompute_scheduler_enable&quot;:false,&quot;multistream_overlap_shared_expert&quot;:true,&quot;enable_dsa_cp&quot;:true,&quot;enable_sparse_sfa_c8&quot;:true,&quot;enable_sparse_li_c8&quot;:true,&quot;c8_enable_reshape_optim&quot;:true}&#x27;</span> \
+  <span class="syn-flag">--max-num-batched-tokens</span> <span class="syn-number">16384</span> \
+  <span class="syn-flag">--max-num-seqs</span> <span class="syn-number">64</span> \
+  <span class="syn-flag">--trust-remote-code</span> \
+  <span class="syn-flag">--no-enable-prefix-caching</span> \
+  <span class="syn-flag">--quantization</span> ascend \
+  <span class="syn-flag">--gpu-memory-utilization</span> <span class="syn-number">0.94</span> \
+  <span class="syn-flag">--enforce-eager</span> \
+  <span class="syn-flag">--enable-auto-tool-choice</span> \
+  <span class="syn-flag">--tool-call-parser</span> glm47 \
+  <span class="syn-flag">--reasoning-parser</span> glm45 \
+  <span class="syn-flag">--kv-transfer-config</span> <span class="syn-string">&#x27;{&quot;kv_role&quot;:&quot;kv_producer&quot;,&quot;kv_port&quot;:&quot;28000&quot;,&quot;engine_id&quot;:&quot;ks-p-p1d1-pp2&quot;,&quot;kv_connector&quot;:&quot;MultiConnector&quot;,&quot;kv_connector_extra_config&quot;:{&quot;connectors&quot;:[{&quot;kv_connector&quot;:&quot;MooncakeConnectorV1&quot;,&quot;kv_role&quot;:&quot;kv_producer&quot;,&quot;kv_port&quot;:&quot;28000&quot;,&quot;kv_connector_extra_config&quot;:{&quot;use_ascend_direct&quot;:true,&quot;prefill&quot;:{&quot;dp_size&quot;:1,&quot;tp_size&quot;:8,&quot;pp_size&quot;:2,&quot;pp_layer_partition&quot;:&quot;41,37&quot;},&quot;decode&quot;:{&quot;dp_size&quot;:4,&quot;tp_size&quot;:4,&quot;pp_size&quot;:1}}},{&quot;kv_connector&quot;:&quot;LMCacheMPConnector&quot;,&quot;kv_role&quot;:&quot;kv_producer&quot;,&quot;kv_connector_module_path&quot;:&quot;lmcache.integration.vllm.lmcache_mp_connector&quot;,&quot;kv_connector_extra_config&quot;:{&quot;lmcache.mp.host&quot;:&quot;tcp://127.0.0.1&quot;,&quot;lmcache.mp.port&quot;:5565,&quot;lmcache.mp.autostart&quot;:false,&quot;lmcache.mp.nonblocking_lookup_status&quot;:false,&quot;lmcache_sync_load&quot;:true,&quot;lmcache_prefetch_before_pp_receive&quot;:true}}]}}&#x27;</span> \
+  <span class="syn-flag">--profiler-config</span> <span class="syn-string">&#x27;{&quot;profiler&quot;:&quot;torch&quot;,&quot;torch_profiler_dir&quot;:&quot;/opt/ks-customer-bench-20261024/stages/on-sync-prefetch/profiles&quot;,&quot;ignore_frontend&quot;:true,&quot;torch_profiler_with_stack&quot;:false,&quot;torch_profiler_with_memory&quot;:false,&quot;torch_profiler_record_shapes&quot;:false,&quot;torch_profiler_with_flops&quot;:false,&quot;delay_iterations&quot;:0,&quot;max_iterations&quot;:0}&#x27;</span></code></pre></details><details><summary>共用D · rank 0（64K／4.5 GiB）</summary><p class="path">来源：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\实际验证配置\d\d0.env.native.sh<br>E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\实际验证配置\d\d0.serve.native.sh</p><h4>环境变量与工作目录</h4><pre><code><span class="syn-keyword">export</span> ASCEND_RT_VISIBLE_DEVICES=<span class="syn-number">0</span>,<span class="syn-number">1</span>,<span class="syn-number">2</span>,<span class="syn-number">3</span>
+<span class="syn-keyword">export</span> ACL_OP_INIT_MODE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ASCEND_TOOLKIT_LATEST_HOME=/usr/local/Ascend/ascend-toolkit/latest
+<span class="syn-keyword">export</span> HCCL_SOCKET_IFNAME=enp23s0f3
+<span class="syn-keyword">export</span> ATB_OPSRUNNER_KERNEL_CACHE_LOCAL_COUNT=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ATB_STREAM_SYNC_EVERY_RUNNER_ENABLE=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> PYTHONHASHSEED=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> KS_NODE=M12
+<span class="syn-keyword">export</span> ATB_STREAM_SYNC_EVERY_KERNEL_ENABLE=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> ATB_CXX_ABI=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ATB_OPSRUNNER_KERNEL_CACHE_GLOABL_COUNT=<span class="syn-number">5</span>
+<span class="syn-keyword">export</span> GLOO_SOCKET_IFNAME=enp23s0f3
+<span class="syn-keyword">export</span> PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+<span class="syn-keyword">export</span> KS_CONTAINER=ks-pp-m12-priv
+<span class="syn-keyword">export</span> HCCL_BUFFSIZE=<span class="syn-number">256</span>
+<span class="syn-keyword">export</span> ATB_HOME_PATH=/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1
+<span class="syn-keyword">export</span> VLLM_ASCEND_ENABLE_FUSED_MC2=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> CMAKE_PREFIX_PATH=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/toolkit/tools/tikicpulib/lib/cmake:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/lib64/cmake
+<span class="syn-keyword">export</span> TOOLCHAIN_HOME=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/toolkit
+<span class="syn-keyword">export</span> HCCL_OP_EXPANSION_MODE=AIV
+<span class="syn-keyword">export</span> OMP_PROC_BIND=false
+<span class="syn-keyword">export</span> ASCEND_TOOLKIT_HOME=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> KS_RUN=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/work/d0
+<span class="syn-keyword">export</span> PYTHONPATH=/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/python/site-packages:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/opp/built-in/op_impl/ai_core/tbe:
+<span class="syn-keyword">export</span> LCCL_DETERMINISTIC=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> TASK_QUEUE_ENABLE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> VLLM_ASCEND_ENABLE_MLAPO=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> TP_SOCKET_IFNAME=enp23s0f3
+<span class="syn-keyword">export</span> ATB_COMPARE_TILING_EVERY_KERNEL=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> ASCEND_OPP_PATH=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/opp
+<span class="syn-keyword">export</span> LD_LIBRARY_PATH=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/lib64:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/lib64/plugin/opskernel:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/lib64/plugin/nnengine:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.<span class="syn-number">12.13</span>/lib::/usr/local/lib
+<span class="syn-keyword">export</span> LCCL_PARALLEL=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> SOC_VERSION=ascend910_9391
+<span class="syn-keyword">export</span> ASCEND_AICPU_PATH=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> OMP_NUM_THREADS=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ATB_STREAM_SYNC_EVERY_OPERATION_ENABLE=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> PATH=/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/bin:/usr/local/Ascend/ascend-toolkit/latest/bin:/usr/local/Ascend/ascend-toolkit/latest/compiler/ccec_compiler/bin:/usr/local/Ascend/ascend-toolkit/latest/tools/ccec_compiler/bin:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/tools/show_kernel_debug_data:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/tools/msobjdump:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/bin:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/tools/ccec_compiler/bin:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/tools/profiler/bin:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/tools/ascend_system_advisor/asys:/usr/local/python3.<span class="syn-number">12.13</span>/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+<span class="syn-keyword">export</span> ASCEND_HOME_PATH=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> HCCL_IF_IP=<span class="syn-number">192.168</span>.<span class="syn-number">0.50</span>
+<span class="syn-keyword">export</span> ATB_MATMUL_SHUFFLE_K_ENABLE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ASCEND_A3_ENABLE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> DEBIAN_FRONTEND=noninteractive
+<span class="syn-keyword">export</span> ATB_WORKSPACE_MEM_ALLOC_ALG_TYPE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ATB_SHARE_MEMORY_NAME_SUFFIX=<span class="syn-string">&#x27;&#x27;</span>
+<span class="syn-keyword">export</span> KS_WORK_HOME=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/cache/d0/home
+<span class="syn-keyword">export</span> TMPDIR=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/work/d0/tmp
+<span class="syn-keyword">export</span> XDG_CACHE_HOME=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/cache/d0/xdg
+<span class="syn-keyword">export</span> HF_HOME=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/cache/d0/xdg/huggingface
+<span class="syn-keyword">export</span> PYTHONDONTWRITEBYTECODE=<span class="syn-number">1</span>
+mkdir -p /opt/ks-customer-bench-<span class="syn-number">20261024</span>/work/d0 <span class="syn-string">&quot;$KS_WORK_HOME&quot;</span> <span class="syn-string">&quot;$TMPDIR&quot;</span> <span class="syn-string">&quot;$XDG_CACHE_HOME&quot;</span> <span class="syn-string">&quot;$HF_HOME&quot;</span>
+<span class="syn-keyword">cd</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/work/d0</code></pre><h4>原生命令</h4><pre><code><span class="syn-keyword">source</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/native-drafts/d/d0.env.native.sh
+<span class="syn-keyword">vllm</span> serve /mnt/sdb/models/GLM-<span class="syn-number">5.1</span>-w8a8c8-MTP \
+  <span class="syn-flag">--host</span> <span class="syn-number">0.0</span>.<span class="syn-number">0.0</span> \
+  <span class="syn-flag">--port</span> <span class="syn-number">18200</span> \
+  <span class="syn-flag">--data-parallel-size</span> <span class="syn-number">4</span> \
+  <span class="syn-flag">--data-parallel-rank</span> <span class="syn-number">0</span> \
+  <span class="syn-flag">--data-parallel-address</span> <span class="syn-number">192.168</span>.<span class="syn-number">0.50</span> \
+  <span class="syn-flag">--data-parallel-rpc-port</span> <span class="syn-number">18300</span> \
+  <span class="syn-flag">--tensor-parallel-size</span> <span class="syn-number">4</span> \
+  <span class="syn-flag">--pipeline-parallel-size</span> <span class="syn-number">1</span> \
+  <span class="syn-flag">--enable-expert-parallel</span> \
+  <span class="syn-flag">--hf-overrides</span> <span class="syn-string">&#x27;{&quot;use_index_cache&quot;:true,&quot;index_topk_freq&quot;:4}&#x27;</span> \
+  <span class="syn-flag">--seed</span> <span class="syn-number">1024</span> \
+  <span class="syn-flag">--served-model-name</span> glm-<span class="syn-number">5</span> \
+  <span class="syn-flag">--max-model-len</span> <span class="syn-number">65536</span> \
+  <span class="syn-flag">--max-num-batched-tokens</span> <span class="syn-number">164</span> \
+  <span class="syn-flag">--max-num-seqs</span> <span class="syn-number">32</span> \
+  <span class="syn-flag">--compilation-config</span> <span class="syn-string">&#x27;{&quot;cudagraph_mode&quot;:&quot;FULL_DECODE_ONLY&quot;}&#x27;</span> \
+  <span class="syn-flag">--speculative-config</span> <span class="syn-string">&#x27;{&quot;num_speculative_tokens&quot;:3,&quot;method&quot;:&quot;deepseek_mtp&quot;,&quot;enforce_eager&quot;:true}&#x27;</span> \
+  <span class="syn-flag">--additional-config</span> <span class="syn-string">&#x27;{&quot;fuse_muls_add&quot;:true,&quot;recompute_scheduler_enable&quot;:true,&quot;multistream_overlap_shared_expert&quot;:true,&quot;enable_sparse_sfa_c8&quot;:true,&quot;enable_sparse_li_c8&quot;:true}&#x27;</span> \
+  <span class="syn-flag">--trust-remote-code</span> \
+  <span class="syn-flag">--no-enable-prefix-caching</span> \
+  <span class="syn-flag">--gpu-memory-utilization</span> <span class="syn-number">0.92</span> \
+  <span class="syn-flag">--async-scheduling</span> \
+  <span class="syn-flag">--quantization</span> ascend \
+  <span class="syn-flag">--enable-auto-tool-choice</span> \
+  <span class="syn-flag">--tool-call-parser</span> glm47 \
+  <span class="syn-flag">--reasoning-parser</span> glm45 \
+  <span class="syn-flag">--kv-transfer-config</span> <span class="syn-string">&#x27;{&quot;kv_connector&quot;:&quot;MooncakeConnectorV1&quot;,&quot;kv_role&quot;:&quot;kv_consumer&quot;,&quot;kv_port&quot;:&quot;29000&quot;,&quot;engine_id&quot;:&quot;ks-d-off-0&quot;,&quot;kv_connector_extra_config&quot;:{&quot;use_ascend_direct&quot;:true,&quot;prefill&quot;:{&quot;dp_size&quot;:1,&quot;tp_size&quot;:8,&quot;pp_size&quot;:2,&quot;pp_layer_partition&quot;:&quot;41,37&quot;},&quot;decode&quot;:{&quot;dp_size&quot;:4,&quot;tp_size&quot;:4,&quot;pp_size&quot;:1}}}&#x27;</span> \
+  <span class="syn-flag">--kv-cache-memory-bytes</span> <span class="syn-number">4831838208</span></code></pre></details><details><summary>共用D · rank 1（64K／4.5 GiB）</summary><p class="path">来源：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\实际验证配置\d\d1.env.native.sh<br>E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\实际验证配置\d\d1.serve.native.sh</p><h4>环境变量与工作目录</h4><pre><code><span class="syn-keyword">export</span> ASCEND_RT_VISIBLE_DEVICES=<span class="syn-number">4</span>,<span class="syn-number">5</span>,<span class="syn-number">6</span>,<span class="syn-number">7</span>
+<span class="syn-keyword">export</span> ACL_OP_INIT_MODE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ASCEND_TOOLKIT_LATEST_HOME=/usr/local/Ascend/ascend-toolkit/latest
+<span class="syn-keyword">export</span> HCCL_SOCKET_IFNAME=enp23s0f3
+<span class="syn-keyword">export</span> ATB_OPSRUNNER_KERNEL_CACHE_LOCAL_COUNT=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ATB_STREAM_SYNC_EVERY_RUNNER_ENABLE=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> PYTHONHASHSEED=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> KS_NODE=M12
+<span class="syn-keyword">export</span> ATB_STREAM_SYNC_EVERY_KERNEL_ENABLE=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> ATB_CXX_ABI=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ATB_OPSRUNNER_KERNEL_CACHE_GLOABL_COUNT=<span class="syn-number">5</span>
+<span class="syn-keyword">export</span> GLOO_SOCKET_IFNAME=enp23s0f3
+<span class="syn-keyword">export</span> PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+<span class="syn-keyword">export</span> KS_CONTAINER=ks-pp-m12-priv
+<span class="syn-keyword">export</span> HCCL_BUFFSIZE=<span class="syn-number">256</span>
+<span class="syn-keyword">export</span> ATB_HOME_PATH=/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1
+<span class="syn-keyword">export</span> VLLM_ASCEND_ENABLE_FUSED_MC2=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> CMAKE_PREFIX_PATH=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/toolkit/tools/tikicpulib/lib/cmake:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/lib64/cmake
+<span class="syn-keyword">export</span> TOOLCHAIN_HOME=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/toolkit
+<span class="syn-keyword">export</span> HCCL_OP_EXPANSION_MODE=AIV
+<span class="syn-keyword">export</span> OMP_PROC_BIND=false
+<span class="syn-keyword">export</span> ASCEND_TOOLKIT_HOME=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> KS_RUN=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/work/d1
+<span class="syn-keyword">export</span> PYTHONPATH=/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/python/site-packages:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/opp/built-in/op_impl/ai_core/tbe:
+<span class="syn-keyword">export</span> LCCL_DETERMINISTIC=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> TASK_QUEUE_ENABLE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> VLLM_ASCEND_ENABLE_MLAPO=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> TP_SOCKET_IFNAME=enp23s0f3
+<span class="syn-keyword">export</span> ATB_COMPARE_TILING_EVERY_KERNEL=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> ASCEND_OPP_PATH=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/opp
+<span class="syn-keyword">export</span> LD_LIBRARY_PATH=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/lib64:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/lib64/plugin/opskernel:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/lib64/plugin/nnengine:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.<span class="syn-number">12.13</span>/lib::/usr/local/lib
+<span class="syn-keyword">export</span> LCCL_PARALLEL=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> SOC_VERSION=ascend910_9391
+<span class="syn-keyword">export</span> ASCEND_AICPU_PATH=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> OMP_NUM_THREADS=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ATB_STREAM_SYNC_EVERY_OPERATION_ENABLE=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> PATH=/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/bin:/usr/local/Ascend/ascend-toolkit/latest/bin:/usr/local/Ascend/ascend-toolkit/latest/compiler/ccec_compiler/bin:/usr/local/Ascend/ascend-toolkit/latest/tools/ccec_compiler/bin:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/tools/show_kernel_debug_data:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/tools/msobjdump:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/bin:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/tools/ccec_compiler/bin:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/tools/profiler/bin:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/tools/ascend_system_advisor/asys:/usr/local/python3.<span class="syn-number">12.13</span>/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+<span class="syn-keyword">export</span> ASCEND_HOME_PATH=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> HCCL_IF_IP=<span class="syn-number">192.168</span>.<span class="syn-number">0.50</span>
+<span class="syn-keyword">export</span> ATB_MATMUL_SHUFFLE_K_ENABLE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ASCEND_A3_ENABLE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> DEBIAN_FRONTEND=noninteractive
+<span class="syn-keyword">export</span> ATB_WORKSPACE_MEM_ALLOC_ALG_TYPE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ATB_SHARE_MEMORY_NAME_SUFFIX=<span class="syn-string">&#x27;&#x27;</span>
+<span class="syn-keyword">export</span> KS_WORK_HOME=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/cache/d1/home
+<span class="syn-keyword">export</span> TMPDIR=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/work/d1/tmp
+<span class="syn-keyword">export</span> XDG_CACHE_HOME=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/cache/d1/xdg
+<span class="syn-keyword">export</span> HF_HOME=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/cache/d1/xdg/huggingface
+<span class="syn-keyword">export</span> PYTHONDONTWRITEBYTECODE=<span class="syn-number">1</span>
+mkdir -p /opt/ks-customer-bench-<span class="syn-number">20261024</span>/work/d1 <span class="syn-string">&quot;$KS_WORK_HOME&quot;</span> <span class="syn-string">&quot;$TMPDIR&quot;</span> <span class="syn-string">&quot;$XDG_CACHE_HOME&quot;</span> <span class="syn-string">&quot;$HF_HOME&quot;</span>
+<span class="syn-keyword">cd</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/work/d1</code></pre><h4>原生命令</h4><pre><code><span class="syn-keyword">source</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/native-drafts/d/d1.env.native.sh
+<span class="syn-keyword">vllm</span> serve /mnt/sdb/models/GLM-<span class="syn-number">5.1</span>-w8a8c8-MTP \
+  <span class="syn-flag">--host</span> <span class="syn-number">0.0</span>.<span class="syn-number">0.0</span> \
+  <span class="syn-flag">--port</span> <span class="syn-number">18201</span> \
+  <span class="syn-flag">--data-parallel-size</span> <span class="syn-number">4</span> \
+  <span class="syn-flag">--data-parallel-rank</span> <span class="syn-number">1</span> \
+  <span class="syn-flag">--data-parallel-address</span> <span class="syn-number">192.168</span>.<span class="syn-number">0.50</span> \
+  <span class="syn-flag">--data-parallel-rpc-port</span> <span class="syn-number">18300</span> \
+  <span class="syn-flag">--tensor-parallel-size</span> <span class="syn-number">4</span> \
+  <span class="syn-flag">--pipeline-parallel-size</span> <span class="syn-number">1</span> \
+  <span class="syn-flag">--enable-expert-parallel</span> \
+  <span class="syn-flag">--hf-overrides</span> <span class="syn-string">&#x27;{&quot;use_index_cache&quot;:true,&quot;index_topk_freq&quot;:4}&#x27;</span> \
+  <span class="syn-flag">--seed</span> <span class="syn-number">1024</span> \
+  <span class="syn-flag">--served-model-name</span> glm-<span class="syn-number">5</span> \
+  <span class="syn-flag">--max-model-len</span> <span class="syn-number">65536</span> \
+  <span class="syn-flag">--max-num-batched-tokens</span> <span class="syn-number">164</span> \
+  <span class="syn-flag">--max-num-seqs</span> <span class="syn-number">32</span> \
+  <span class="syn-flag">--compilation-config</span> <span class="syn-string">&#x27;{&quot;cudagraph_mode&quot;:&quot;FULL_DECODE_ONLY&quot;}&#x27;</span> \
+  <span class="syn-flag">--speculative-config</span> <span class="syn-string">&#x27;{&quot;num_speculative_tokens&quot;:3,&quot;method&quot;:&quot;deepseek_mtp&quot;,&quot;enforce_eager&quot;:true}&#x27;</span> \
+  <span class="syn-flag">--additional-config</span> <span class="syn-string">&#x27;{&quot;fuse_muls_add&quot;:true,&quot;recompute_scheduler_enable&quot;:true,&quot;multistream_overlap_shared_expert&quot;:true,&quot;enable_sparse_sfa_c8&quot;:true,&quot;enable_sparse_li_c8&quot;:true}&#x27;</span> \
+  <span class="syn-flag">--trust-remote-code</span> \
+  <span class="syn-flag">--no-enable-prefix-caching</span> \
+  <span class="syn-flag">--gpu-memory-utilization</span> <span class="syn-number">0.92</span> \
+  <span class="syn-flag">--async-scheduling</span> \
+  <span class="syn-flag">--quantization</span> ascend \
+  <span class="syn-flag">--enable-auto-tool-choice</span> \
+  <span class="syn-flag">--tool-call-parser</span> glm47 \
+  <span class="syn-flag">--reasoning-parser</span> glm45 \
+  <span class="syn-flag">--kv-transfer-config</span> <span class="syn-string">&#x27;{&quot;kv_connector&quot;:&quot;MooncakeConnectorV1&quot;,&quot;kv_role&quot;:&quot;kv_consumer&quot;,&quot;kv_port&quot;:&quot;29000&quot;,&quot;engine_id&quot;:&quot;ks-d-off-1&quot;,&quot;kv_connector_extra_config&quot;:{&quot;use_ascend_direct&quot;:true,&quot;prefill&quot;:{&quot;dp_size&quot;:1,&quot;tp_size&quot;:8,&quot;pp_size&quot;:2,&quot;pp_layer_partition&quot;:&quot;41,37&quot;},&quot;decode&quot;:{&quot;dp_size&quot;:4,&quot;tp_size&quot;:4,&quot;pp_size&quot;:1}}}&#x27;</span> \
+  <span class="syn-flag">--kv-cache-memory-bytes</span> <span class="syn-number">4831838208</span></code></pre></details><details><summary>共用D · rank 2（64K／4.5 GiB）</summary><p class="path">来源：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\实际验证配置\d\d2.env.native.sh<br>E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\实际验证配置\d\d2.serve.native.sh</p><h4>环境变量与工作目录</h4><pre><code><span class="syn-keyword">export</span> ASCEND_RT_VISIBLE_DEVICES=<span class="syn-number">8</span>,<span class="syn-number">9</span>,<span class="syn-number">10</span>,<span class="syn-number">11</span>
+<span class="syn-keyword">export</span> ACL_OP_INIT_MODE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ASCEND_TOOLKIT_LATEST_HOME=/usr/local/Ascend/ascend-toolkit/latest
+<span class="syn-keyword">export</span> HCCL_SOCKET_IFNAME=enp23s0f3
+<span class="syn-keyword">export</span> ATB_OPSRUNNER_KERNEL_CACHE_LOCAL_COUNT=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ATB_STREAM_SYNC_EVERY_RUNNER_ENABLE=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> PYTHONHASHSEED=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> KS_NODE=M12
+<span class="syn-keyword">export</span> ATB_STREAM_SYNC_EVERY_KERNEL_ENABLE=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> ATB_CXX_ABI=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ATB_OPSRUNNER_KERNEL_CACHE_GLOABL_COUNT=<span class="syn-number">5</span>
+<span class="syn-keyword">export</span> GLOO_SOCKET_IFNAME=enp23s0f3
+<span class="syn-keyword">export</span> PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+<span class="syn-keyword">export</span> KS_CONTAINER=ks-pp-m12-priv
+<span class="syn-keyword">export</span> HCCL_BUFFSIZE=<span class="syn-number">256</span>
+<span class="syn-keyword">export</span> ATB_HOME_PATH=/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1
+<span class="syn-keyword">export</span> VLLM_ASCEND_ENABLE_FUSED_MC2=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> CMAKE_PREFIX_PATH=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/toolkit/tools/tikicpulib/lib/cmake:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/lib64/cmake
+<span class="syn-keyword">export</span> TOOLCHAIN_HOME=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/toolkit
+<span class="syn-keyword">export</span> HCCL_OP_EXPANSION_MODE=AIV
+<span class="syn-keyword">export</span> OMP_PROC_BIND=false
+<span class="syn-keyword">export</span> ASCEND_TOOLKIT_HOME=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> KS_RUN=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/work/d2
+<span class="syn-keyword">export</span> PYTHONPATH=/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/python/site-packages:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/opp/built-in/op_impl/ai_core/tbe:
+<span class="syn-keyword">export</span> LCCL_DETERMINISTIC=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> TASK_QUEUE_ENABLE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> VLLM_ASCEND_ENABLE_MLAPO=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> TP_SOCKET_IFNAME=enp23s0f3
+<span class="syn-keyword">export</span> ATB_COMPARE_TILING_EVERY_KERNEL=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> ASCEND_OPP_PATH=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/opp
+<span class="syn-keyword">export</span> LD_LIBRARY_PATH=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/lib64:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/lib64/plugin/opskernel:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/lib64/plugin/nnengine:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.<span class="syn-number">12.13</span>/lib::/usr/local/lib
+<span class="syn-keyword">export</span> LCCL_PARALLEL=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> SOC_VERSION=ascend910_9391
+<span class="syn-keyword">export</span> ASCEND_AICPU_PATH=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> OMP_NUM_THREADS=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ATB_STREAM_SYNC_EVERY_OPERATION_ENABLE=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> PATH=/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/bin:/usr/local/Ascend/ascend-toolkit/latest/bin:/usr/local/Ascend/ascend-toolkit/latest/compiler/ccec_compiler/bin:/usr/local/Ascend/ascend-toolkit/latest/tools/ccec_compiler/bin:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/tools/show_kernel_debug_data:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/tools/msobjdump:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/bin:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/tools/ccec_compiler/bin:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/tools/profiler/bin:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/tools/ascend_system_advisor/asys:/usr/local/python3.<span class="syn-number">12.13</span>/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+<span class="syn-keyword">export</span> ASCEND_HOME_PATH=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> HCCL_IF_IP=<span class="syn-number">192.168</span>.<span class="syn-number">0.50</span>
+<span class="syn-keyword">export</span> ATB_MATMUL_SHUFFLE_K_ENABLE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ASCEND_A3_ENABLE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> DEBIAN_FRONTEND=noninteractive
+<span class="syn-keyword">export</span> ATB_WORKSPACE_MEM_ALLOC_ALG_TYPE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ATB_SHARE_MEMORY_NAME_SUFFIX=<span class="syn-string">&#x27;&#x27;</span>
+<span class="syn-keyword">export</span> KS_WORK_HOME=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/cache/d2/home
+<span class="syn-keyword">export</span> TMPDIR=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/work/d2/tmp
+<span class="syn-keyword">export</span> XDG_CACHE_HOME=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/cache/d2/xdg
+<span class="syn-keyword">export</span> HF_HOME=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/cache/d2/xdg/huggingface
+<span class="syn-keyword">export</span> PYTHONDONTWRITEBYTECODE=<span class="syn-number">1</span>
+mkdir -p /opt/ks-customer-bench-<span class="syn-number">20261024</span>/work/d2 <span class="syn-string">&quot;$KS_WORK_HOME&quot;</span> <span class="syn-string">&quot;$TMPDIR&quot;</span> <span class="syn-string">&quot;$XDG_CACHE_HOME&quot;</span> <span class="syn-string">&quot;$HF_HOME&quot;</span>
+<span class="syn-keyword">cd</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/work/d2</code></pre><h4>原生命令</h4><pre><code><span class="syn-keyword">source</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/native-drafts/d/d2.env.native.sh
+<span class="syn-keyword">vllm</span> serve /mnt/sdb/models/GLM-<span class="syn-number">5.1</span>-w8a8c8-MTP \
+  <span class="syn-flag">--host</span> <span class="syn-number">0.0</span>.<span class="syn-number">0.0</span> \
+  <span class="syn-flag">--port</span> <span class="syn-number">18202</span> \
+  <span class="syn-flag">--data-parallel-size</span> <span class="syn-number">4</span> \
+  <span class="syn-flag">--data-parallel-rank</span> <span class="syn-number">2</span> \
+  <span class="syn-flag">--data-parallel-address</span> <span class="syn-number">192.168</span>.<span class="syn-number">0.50</span> \
+  <span class="syn-flag">--data-parallel-rpc-port</span> <span class="syn-number">18300</span> \
+  <span class="syn-flag">--tensor-parallel-size</span> <span class="syn-number">4</span> \
+  <span class="syn-flag">--pipeline-parallel-size</span> <span class="syn-number">1</span> \
+  <span class="syn-flag">--enable-expert-parallel</span> \
+  <span class="syn-flag">--hf-overrides</span> <span class="syn-string">&#x27;{&quot;use_index_cache&quot;:true,&quot;index_topk_freq&quot;:4}&#x27;</span> \
+  <span class="syn-flag">--seed</span> <span class="syn-number">1024</span> \
+  <span class="syn-flag">--served-model-name</span> glm-<span class="syn-number">5</span> \
+  <span class="syn-flag">--max-model-len</span> <span class="syn-number">65536</span> \
+  <span class="syn-flag">--max-num-batched-tokens</span> <span class="syn-number">164</span> \
+  <span class="syn-flag">--max-num-seqs</span> <span class="syn-number">32</span> \
+  <span class="syn-flag">--compilation-config</span> <span class="syn-string">&#x27;{&quot;cudagraph_mode&quot;:&quot;FULL_DECODE_ONLY&quot;}&#x27;</span> \
+  <span class="syn-flag">--speculative-config</span> <span class="syn-string">&#x27;{&quot;num_speculative_tokens&quot;:3,&quot;method&quot;:&quot;deepseek_mtp&quot;,&quot;enforce_eager&quot;:true}&#x27;</span> \
+  <span class="syn-flag">--additional-config</span> <span class="syn-string">&#x27;{&quot;fuse_muls_add&quot;:true,&quot;recompute_scheduler_enable&quot;:true,&quot;multistream_overlap_shared_expert&quot;:true,&quot;enable_sparse_sfa_c8&quot;:true,&quot;enable_sparse_li_c8&quot;:true}&#x27;</span> \
+  <span class="syn-flag">--trust-remote-code</span> \
+  <span class="syn-flag">--no-enable-prefix-caching</span> \
+  <span class="syn-flag">--gpu-memory-utilization</span> <span class="syn-number">0.92</span> \
+  <span class="syn-flag">--async-scheduling</span> \
+  <span class="syn-flag">--quantization</span> ascend \
+  <span class="syn-flag">--enable-auto-tool-choice</span> \
+  <span class="syn-flag">--tool-call-parser</span> glm47 \
+  <span class="syn-flag">--reasoning-parser</span> glm45 \
+  <span class="syn-flag">--kv-transfer-config</span> <span class="syn-string">&#x27;{&quot;kv_connector&quot;:&quot;MooncakeConnectorV1&quot;,&quot;kv_role&quot;:&quot;kv_consumer&quot;,&quot;kv_port&quot;:&quot;29000&quot;,&quot;engine_id&quot;:&quot;ks-d-off-2&quot;,&quot;kv_connector_extra_config&quot;:{&quot;use_ascend_direct&quot;:true,&quot;prefill&quot;:{&quot;dp_size&quot;:1,&quot;tp_size&quot;:8,&quot;pp_size&quot;:2,&quot;pp_layer_partition&quot;:&quot;41,37&quot;},&quot;decode&quot;:{&quot;dp_size&quot;:4,&quot;tp_size&quot;:4,&quot;pp_size&quot;:1}}}&#x27;</span> \
+  <span class="syn-flag">--kv-cache-memory-bytes</span> <span class="syn-number">4831838208</span></code></pre></details><details><summary>共用D · rank 3（64K／4.5 GiB）</summary><p class="path">来源：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\实际验证配置\d\d3.env.native.sh<br>E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\实际验证配置\d\d3.serve.native.sh</p><h4>环境变量与工作目录</h4><pre><code><span class="syn-keyword">export</span> ASCEND_RT_VISIBLE_DEVICES=<span class="syn-number">12</span>,<span class="syn-number">13</span>,<span class="syn-number">14</span>,<span class="syn-number">15</span>
+<span class="syn-keyword">export</span> ACL_OP_INIT_MODE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ASCEND_TOOLKIT_LATEST_HOME=/usr/local/Ascend/ascend-toolkit/latest
+<span class="syn-keyword">export</span> HCCL_SOCKET_IFNAME=enp23s0f3
+<span class="syn-keyword">export</span> ATB_OPSRUNNER_KERNEL_CACHE_LOCAL_COUNT=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ATB_STREAM_SYNC_EVERY_RUNNER_ENABLE=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> PYTHONHASHSEED=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> KS_NODE=M12
+<span class="syn-keyword">export</span> ATB_STREAM_SYNC_EVERY_KERNEL_ENABLE=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> ATB_CXX_ABI=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ATB_OPSRUNNER_KERNEL_CACHE_GLOABL_COUNT=<span class="syn-number">5</span>
+<span class="syn-keyword">export</span> GLOO_SOCKET_IFNAME=enp23s0f3
+<span class="syn-keyword">export</span> PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+<span class="syn-keyword">export</span> KS_CONTAINER=ks-pp-m12-priv
+<span class="syn-keyword">export</span> HCCL_BUFFSIZE=<span class="syn-number">256</span>
+<span class="syn-keyword">export</span> ATB_HOME_PATH=/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1
+<span class="syn-keyword">export</span> VLLM_ASCEND_ENABLE_FUSED_MC2=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> CMAKE_PREFIX_PATH=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/toolkit/tools/tikicpulib/lib/cmake:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/lib64/cmake
+<span class="syn-keyword">export</span> TOOLCHAIN_HOME=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/toolkit
+<span class="syn-keyword">export</span> HCCL_OP_EXPANSION_MODE=AIV
+<span class="syn-keyword">export</span> OMP_PROC_BIND=false
+<span class="syn-keyword">export</span> ASCEND_TOOLKIT_HOME=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> KS_RUN=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/work/d3
+<span class="syn-keyword">export</span> PYTHONPATH=/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/python/site-packages:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/opp/built-in/op_impl/ai_core/tbe:
+<span class="syn-keyword">export</span> LCCL_DETERMINISTIC=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> TASK_QUEUE_ENABLE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> VLLM_ASCEND_ENABLE_MLAPO=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> TP_SOCKET_IFNAME=enp23s0f3
+<span class="syn-keyword">export</span> ATB_COMPARE_TILING_EVERY_KERNEL=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> ASCEND_OPP_PATH=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/opp
+<span class="syn-keyword">export</span> LD_LIBRARY_PATH=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/lib64:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/lib64/plugin/opskernel:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/lib64/plugin/nnengine:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.<span class="syn-number">12.13</span>/lib::/usr/local/lib
+<span class="syn-keyword">export</span> LCCL_PARALLEL=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> SOC_VERSION=ascend910_9391
+<span class="syn-keyword">export</span> ASCEND_AICPU_PATH=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> OMP_NUM_THREADS=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ATB_STREAM_SYNC_EVERY_OPERATION_ENABLE=<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> PATH=/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/bin:/usr/local/Ascend/ascend-toolkit/latest/bin:/usr/local/Ascend/ascend-toolkit/latest/compiler/ccec_compiler/bin:/usr/local/Ascend/ascend-toolkit/latest/tools/ccec_compiler/bin:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/tools/show_kernel_debug_data:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/tools/msobjdump:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/bin:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/tools/ccec_compiler/bin:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/tools/profiler/bin:/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>/tools/ascend_system_advisor/asys:/usr/local/python3.<span class="syn-number">12.13</span>/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+<span class="syn-keyword">export</span> ASCEND_HOME_PATH=/usr/local/Ascend/cann-<span class="syn-number">9.1</span>.<span class="syn-number">0</span>
+<span class="syn-keyword">export</span> HCCL_IF_IP=<span class="syn-number">192.168</span>.<span class="syn-number">0.50</span>
+<span class="syn-keyword">export</span> ATB_MATMUL_SHUFFLE_K_ENABLE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ASCEND_A3_ENABLE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> DEBIAN_FRONTEND=noninteractive
+<span class="syn-keyword">export</span> ATB_WORKSPACE_MEM_ALLOC_ALG_TYPE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ATB_SHARE_MEMORY_NAME_SUFFIX=<span class="syn-string">&#x27;&#x27;</span>
+<span class="syn-keyword">export</span> KS_WORK_HOME=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/cache/d3/home
+<span class="syn-keyword">export</span> TMPDIR=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/work/d3/tmp
+<span class="syn-keyword">export</span> XDG_CACHE_HOME=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/cache/d3/xdg
+<span class="syn-keyword">export</span> HF_HOME=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/cache/d3/xdg/huggingface
+<span class="syn-keyword">export</span> PYTHONDONTWRITEBYTECODE=<span class="syn-number">1</span>
+mkdir -p /opt/ks-customer-bench-<span class="syn-number">20261024</span>/work/d3 <span class="syn-string">&quot;$KS_WORK_HOME&quot;</span> <span class="syn-string">&quot;$TMPDIR&quot;</span> <span class="syn-string">&quot;$XDG_CACHE_HOME&quot;</span> <span class="syn-string">&quot;$HF_HOME&quot;</span>
+<span class="syn-keyword">cd</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/work/d3</code></pre><h4>原生命令</h4><pre><code><span class="syn-keyword">source</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/native-drafts/d/d3.env.native.sh
+<span class="syn-keyword">vllm</span> serve /mnt/sdb/models/GLM-<span class="syn-number">5.1</span>-w8a8c8-MTP \
+  <span class="syn-flag">--host</span> <span class="syn-number">0.0</span>.<span class="syn-number">0.0</span> \
+  <span class="syn-flag">--port</span> <span class="syn-number">18203</span> \
+  <span class="syn-flag">--data-parallel-size</span> <span class="syn-number">4</span> \
+  <span class="syn-flag">--data-parallel-rank</span> <span class="syn-number">3</span> \
+  <span class="syn-flag">--data-parallel-address</span> <span class="syn-number">192.168</span>.<span class="syn-number">0.50</span> \
+  <span class="syn-flag">--data-parallel-rpc-port</span> <span class="syn-number">18300</span> \
+  <span class="syn-flag">--tensor-parallel-size</span> <span class="syn-number">4</span> \
+  <span class="syn-flag">--pipeline-parallel-size</span> <span class="syn-number">1</span> \
+  <span class="syn-flag">--enable-expert-parallel</span> \
+  <span class="syn-flag">--hf-overrides</span> <span class="syn-string">&#x27;{&quot;use_index_cache&quot;:true,&quot;index_topk_freq&quot;:4}&#x27;</span> \
+  <span class="syn-flag">--seed</span> <span class="syn-number">1024</span> \
+  <span class="syn-flag">--served-model-name</span> glm-<span class="syn-number">5</span> \
+  <span class="syn-flag">--max-model-len</span> <span class="syn-number">65536</span> \
+  <span class="syn-flag">--max-num-batched-tokens</span> <span class="syn-number">164</span> \
+  <span class="syn-flag">--max-num-seqs</span> <span class="syn-number">32</span> \
+  <span class="syn-flag">--compilation-config</span> <span class="syn-string">&#x27;{&quot;cudagraph_mode&quot;:&quot;FULL_DECODE_ONLY&quot;}&#x27;</span> \
+  <span class="syn-flag">--speculative-config</span> <span class="syn-string">&#x27;{&quot;num_speculative_tokens&quot;:3,&quot;method&quot;:&quot;deepseek_mtp&quot;,&quot;enforce_eager&quot;:true}&#x27;</span> \
+  <span class="syn-flag">--additional-config</span> <span class="syn-string">&#x27;{&quot;fuse_muls_add&quot;:true,&quot;recompute_scheduler_enable&quot;:true,&quot;multistream_overlap_shared_expert&quot;:true,&quot;enable_sparse_sfa_c8&quot;:true,&quot;enable_sparse_li_c8&quot;:true}&#x27;</span> \
+  <span class="syn-flag">--trust-remote-code</span> \
+  <span class="syn-flag">--no-enable-prefix-caching</span> \
+  <span class="syn-flag">--gpu-memory-utilization</span> <span class="syn-number">0.92</span> \
+  <span class="syn-flag">--async-scheduling</span> \
+  <span class="syn-flag">--quantization</span> ascend \
+  <span class="syn-flag">--enable-auto-tool-choice</span> \
+  <span class="syn-flag">--tool-call-parser</span> glm47 \
+  <span class="syn-flag">--reasoning-parser</span> glm45 \
+  <span class="syn-flag">--kv-transfer-config</span> <span class="syn-string">&#x27;{&quot;kv_connector&quot;:&quot;MooncakeConnectorV1&quot;,&quot;kv_role&quot;:&quot;kv_consumer&quot;,&quot;kv_port&quot;:&quot;29000&quot;,&quot;engine_id&quot;:&quot;ks-d-off-3&quot;,&quot;kv_connector_extra_config&quot;:{&quot;use_ascend_direct&quot;:true,&quot;prefill&quot;:{&quot;dp_size&quot;:1,&quot;tp_size&quot;:8,&quot;pp_size&quot;:2,&quot;pp_layer_partition&quot;:&quot;41,37&quot;},&quot;decode&quot;:{&quot;dp_size&quot;:4,&quot;tp_size&quot;:4,&quot;pp_size&quot;:1}}}&#x27;</span> \
+  <span class="syn-flag">--kv-cache-memory-bytes</span> <span class="syn-number">4831838208</span></code></pre></details><details><summary>共用LMCache · 12 GiB</summary><p class="path">来源：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\实际验证配置\cache\server.shared.env.native.sh<br>E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\实际验证配置\cache\server.shared.native.sh</p><h4>环境变量与工作目录</h4><pre><code><span class="syn-keyword">export</span> KS_TTFT_TRACE_DIR=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/cache/traces
+<span class="syn-keyword">export</span> KS_MP=/opt/ks-<span class="syn-keyword">lmcache</span>-stage2/official-mp-v0.<span class="syn-number">5</span>.6rc5
+<span class="syn-keyword">export</span> KS_WORK_HOME=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/cache/pp2/home
+<span class="syn-keyword">export</span> TMPDIR=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/cache/tmp/cache
+<span class="syn-keyword">export</span> XDG_CACHE_HOME=/opt/ks-customer-bench-<span class="syn-number">20261024</span>/cache/pp2/xdg
+<span class="syn-keyword">export</span> HF_HOME=<span class="syn-string">&quot;$XDG_CACHE_HOME/huggingface&quot;</span>
+<span class="syn-keyword">export</span> HF_HUB_CACHE=<span class="syn-string">&quot;$HF_HOME/hub&quot;</span>
+<span class="syn-keyword">export</span> HUGGINGFACE_HUB_CACHE=<span class="syn-string">&quot;$HF_HUB_CACHE&quot;</span>
+<span class="syn-keyword">export</span> HF_DATASETS_CACHE=<span class="syn-string">&quot;$HF_HOME/datasets&quot;</span>
+<span class="syn-keyword">export</span> TORCH_HOME=<span class="syn-string">&quot;$XDG_CACHE_HOME/torch&quot;</span>
+<span class="syn-keyword">export</span> VLLM_CACHE_ROOT=<span class="syn-string">&quot;$XDG_CACHE_HOME/vllm&quot;</span>
+<span class="syn-keyword">unset</span> TRANSFORMERS_CACHE
+<span class="syn-keyword">export</span> PATH=<span class="syn-string">&quot;$KS_MP/venv/bin:$PATH&quot;</span>
+<span class="syn-keyword">export</span> PYTHONPATH=<span class="syn-string">&quot;/opt/ks-night-luv-20261023/runtime/baseline:$KS_MP/LMCache-Ascend-official-v0.5.6rc5:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe&quot;</span>
+<span class="syn-keyword">export</span> PYTHONDONTWRITEBYTECODE=<span class="syn-number">1</span>
+<span class="syn-keyword">export</span> ASCEND_RT_VISIBLE_DEVICES=<span class="syn-number">0</span>,<span class="syn-number">1</span>,<span class="syn-number">2</span>,<span class="syn-number">3</span>,<span class="syn-number">4</span>,<span class="syn-number">5</span>,<span class="syn-number">6</span>,<span class="syn-number">7</span>,<span class="syn-number">8</span>,<span class="syn-number">9</span>,<span class="syn-number">10</span>,<span class="syn-number">11</span>,<span class="syn-number">12</span>,<span class="syn-number">13</span>,<span class="syn-number">14</span>,<span class="syn-number">15</span>
+<span class="syn-keyword">export</span> LMCACHE_TRACK_USAGE=false
+<span class="syn-keyword">unset</span> TORCH_DEVICE_BACKEND_AUTOLOAD LMCACHE_CONFIG_FILE
+mkdir -p /opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/cache/work/cache <span class="syn-string">&quot;$KS_WORK_HOME&quot;</span> <span class="syn-string">&quot;$TMPDIR&quot;</span> <span class="syn-string">&quot;$XDG_CACHE_HOME&quot;</span> <span class="syn-string">&quot;$KS_TTFT_TRACE_DIR&quot;</span>
+<span class="syn-keyword">cd</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/cache/work/cache</code></pre><h4>原生命令</h4><pre><code><span class="syn-keyword">source</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/native-drafts/cache/server.shared.env.native.sh
+<span class="syn-keyword">lmcache</span> server <span class="syn-flag">--host</span> <span class="syn-number">127.0</span>.<span class="syn-number">0.1</span> <span class="syn-flag">--port</span> <span class="syn-number">5565</span> <span class="syn-flag">--http-host</span> <span class="syn-number">127.0</span>.<span class="syn-number">0.1</span> <span class="syn-flag">--http-port</span> <span class="syn-number">15565</span> <span class="syn-flag">--chunk-size</span> <span class="syn-number">512</span> <span class="syn-flag">--supported-transfer-mode</span> lmcache_driven <span class="syn-flag">--l1-size-gb</span> <span class="syn-number">12</span> <span class="syn-flag">--eviction-policy</span> LRU <span class="syn-flag">--l1-align-bytes</span> <span class="syn-number">65536</span> <span class="syn-flag">--disable-metrics</span> <span class="syn-flag">--instance-id</span> ks-luv-customer-<span class="syn-number">20261024</span> <span class="syn-flag">--max-gpu-workers</span> <span class="syn-number">1</span></code></pre></details><details><summary>正式benchmark · 不接LMCache</summary><pre><code><span class="syn-keyword">cd</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/benchmark
+<span class="syn-keyword">unset</span> PYTHONPATH
+<span class="syn-keyword">vllm</span> bench serve \
+  <span class="syn-flag">--backend</span> openai \
+  <span class="syn-flag">--base-url</span> http://<span class="syn-number">127.0</span>.<span class="syn-number">0.1</span>:<span class="syn-number">18080</span> \
+  <span class="syn-flag">--endpoint</span> /v1/completions \
+  <span class="syn-flag">--model</span> glm-<span class="syn-number">5</span> \
+  <span class="syn-flag">--tokenizer</span> /mnt/sdb/models/GLM-<span class="syn-number">5.1</span>-w8a8c8-MTP \
+  <span class="syn-flag">--dataset-name</span> custom \
+  <span class="syn-flag">--dataset-path</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/capacity-pools-20261024T110510324465Z/cap_49152/custom.jsonl \
+  <span class="syn-flag">--custom-output-len</span> -<span class="syn-number">1</span> \
+  <span class="syn-flag">--disable-shuffle</span> \
+  <span class="syn-flag">--skip-chat-template</span> \
+  <span class="syn-flag">--no-oversample</span> \
+  <span class="syn-flag">--num-prompts</span> <span class="syn-number">389</span> \
+  <span class="syn-flag">--max-concurrency</span> <span class="syn-number">4</span> \
+  <span class="syn-flag">--request-rate</span> inf \
+  <span class="syn-flag">--num-warmups</span> <span class="syn-number">0</span> \
+  <span class="syn-flag">--ready-check-timeout-sec</span> <span class="syn-number">0</span> \
+  <span class="syn-flag">--temperature</span> <span class="syn-number">0</span> \
+  <span class="syn-flag">--ignore-eos</span> \
+  <span class="syn-flag">--seed</span> <span class="syn-number">0</span> \
+  <span class="syn-flag">--percentile-metrics</span> ttft,tpot,itl,e2el \
+  <span class="syn-flag">--metric-percentiles</span> <span class="syn-number">50</span>,<span class="syn-number">90</span>,<span class="syn-number">95</span>,<span class="syn-number">99</span> \
+  <span class="syn-flag">--save-result</span> \
+  <span class="syn-flag">--save-detailed</span> \
+  <span class="syn-flag">--result-dir</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/off/customer-<span class="syn-number">49152</span>-formal \
+  <span class="syn-flag">--result-filename</span> benchmark.json</code></pre></details><details><summary>正式benchmark · 原异步ON</summary><pre><code><span class="syn-keyword">cd</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/benchmark
+<span class="syn-keyword">unset</span> PYTHONPATH
+<span class="syn-keyword">vllm</span> bench serve \
+  <span class="syn-flag">--backend</span> openai \
+  <span class="syn-flag">--base-url</span> http://<span class="syn-number">127.0</span>.<span class="syn-number">0.1</span>:<span class="syn-number">18080</span> \
+  <span class="syn-flag">--endpoint</span> /v1/completions \
+  <span class="syn-flag">--model</span> glm-<span class="syn-number">5</span> \
+  <span class="syn-flag">--tokenizer</span> /mnt/sdb/models/GLM-<span class="syn-number">5.1</span>-w8a8c8-MTP \
+  <span class="syn-flag">--dataset-name</span> custom \
+  <span class="syn-flag">--dataset-path</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/capacity-pools-20261024T110510324465Z/cap_49152/custom.jsonl \
+  <span class="syn-flag">--custom-output-len</span> -<span class="syn-number">1</span> \
+  <span class="syn-flag">--disable-shuffle</span> \
+  <span class="syn-flag">--skip-chat-template</span> \
+  <span class="syn-flag">--no-oversample</span> \
+  <span class="syn-flag">--num-prompts</span> <span class="syn-number">389</span> \
+  <span class="syn-flag">--max-concurrency</span> <span class="syn-number">4</span> \
+  <span class="syn-flag">--request-rate</span> inf \
+  <span class="syn-flag">--num-warmups</span> <span class="syn-number">0</span> \
+  <span class="syn-flag">--ready-check-timeout-sec</span> <span class="syn-number">0</span> \
+  <span class="syn-flag">--temperature</span> <span class="syn-number">0</span> \
+  <span class="syn-flag">--ignore-eos</span> \
+  <span class="syn-flag">--seed</span> <span class="syn-number">0</span> \
+  <span class="syn-flag">--percentile-metrics</span> ttft,tpot,itl,e2el \
+  <span class="syn-flag">--metric-percentiles</span> <span class="syn-number">50</span>,<span class="syn-number">90</span>,<span class="syn-number">95</span>,<span class="syn-number">99</span> \
+  <span class="syn-flag">--save-result</span> \
+  <span class="syn-flag">--save-detailed</span> \
+  <span class="syn-flag">--result-dir</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/on-async/customer-<span class="syn-number">49152</span>-formal-repeat2 \
+  <span class="syn-flag">--result-filename</span> benchmark.json</code></pre></details><details><summary>正式benchmark · 同步＋提前读取ON</summary><pre><code><span class="syn-keyword">cd</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/benchmark
+<span class="syn-keyword">unset</span> PYTHONPATH
+<span class="syn-keyword">vllm</span> bench serve \
+  <span class="syn-flag">--backend</span> openai \
+  <span class="syn-flag">--base-url</span> http://<span class="syn-number">127.0</span>.<span class="syn-number">0.1</span>:<span class="syn-number">18080</span> \
+  <span class="syn-flag">--endpoint</span> /v1/completions \
+  <span class="syn-flag">--model</span> glm-<span class="syn-number">5</span> \
+  <span class="syn-flag">--tokenizer</span> /mnt/sdb/models/GLM-<span class="syn-number">5.1</span>-w8a8c8-MTP \
+  <span class="syn-flag">--dataset-name</span> custom \
+  <span class="syn-flag">--dataset-path</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/capacity-pools-20261024T110510324465Z/cap_49152/custom.jsonl \
+  <span class="syn-flag">--custom-output-len</span> -<span class="syn-number">1</span> \
+  <span class="syn-flag">--disable-shuffle</span> \
+  <span class="syn-flag">--skip-chat-template</span> \
+  <span class="syn-flag">--no-oversample</span> \
+  <span class="syn-flag">--num-prompts</span> <span class="syn-number">389</span> \
+  <span class="syn-flag">--max-concurrency</span> <span class="syn-number">4</span> \
+  <span class="syn-flag">--request-rate</span> inf \
+  <span class="syn-flag">--num-warmups</span> <span class="syn-number">0</span> \
+  <span class="syn-flag">--ready-check-timeout-sec</span> <span class="syn-number">0</span> \
+  <span class="syn-flag">--temperature</span> <span class="syn-number">0</span> \
+  <span class="syn-flag">--ignore-eos</span> \
+  <span class="syn-flag">--seed</span> <span class="syn-number">0</span> \
+  <span class="syn-flag">--percentile-metrics</span> ttft,tpot,itl,e2el \
+  <span class="syn-flag">--metric-percentiles</span> <span class="syn-number">50</span>,<span class="syn-number">90</span>,<span class="syn-number">95</span>,<span class="syn-number">99</span> \
+  <span class="syn-flag">--save-result</span> \
+  <span class="syn-flag">--save-detailed</span> \
+  <span class="syn-flag">--result-dir</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/on-sync-prefetch/customer-<span class="syn-number">49152</span>-formal \
+  <span class="syn-flag">--result-filename</span> benchmark.json</code></pre></details></section>
+<section id="evidence"><div class="section-number">06</div><h2>能得出什么，仍不能得出什么</h2><ul class="boundaries"><li>TTFT是客户端发出请求到首个有效输出流块，包含调度、缓存、传输及D首输出，不能全部称P计算。</li><li>TPOT按首输出后的时间与实际输出token数摊分，不是D纯解码或单个D算子的计时。MTP的流块ITL也不是逐token间隔。</li><li>D external prefix计数表示Mooncake接入P侧KV，不能称D的LMCache命中率。客户metadata前缀比例也不是实际LMCache命中率。</li><li>均值降幅=(参照均值−候选均值)/参照均值；正值表示耗时减少，不是逐条百分比的均值，也未声称统计显著性。</li><li>优化ON同时改变同步恢复与后段提前读取；三组可证明组合效果，不能单独分离两项贡献。</li><li>实际采集经过既有client_observe入口并产生client.jsonl；原生vllm bench复现请求参数，不自动包含同样维测。额外观测开销未单独量化。</li><li>服务日志按runs中的角色／容量归档；内部trace仍在stages/phase/traces，须用请求ID和时间关联，不能混入旧64K或历史合成数据。</li><li>OFF64的408条成功与ON64的内部OOM是独立容量结果，不与48K389条混作主对照。KS-MEM-001保持OPEN。</li></ul><h3>保留的含失败原轮：不进入成功复跑主比较</h3><p>主表使用完整成功复跑。以下原轮独立归档，不删除失败请求，也不把其中成功请求裁剪后混入主表；具体失败原因须回查其客户端／服务端证据。</p><div class="table-wrap "><table><thead><tr><th>归档</th><th>成功</th><th>失败</th><th>原件路径</th></tr></thead><tbody><tr><th>benchmark.json</th><td>388</td><td>1</td><td><span class="path">E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-async\m12-20261024-214936-092545\stages\on-async\customer-49152-formal\benchmark.json</span></td></tr></tbody></table></div><details><summary>含失败异步首轮 · 原生benchmark（独立归档）</summary><pre><code><span class="syn-keyword">cd</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/benchmark
+<span class="syn-keyword">unset</span> PYTHONPATH
+<span class="syn-keyword">vllm</span> bench serve \
+  <span class="syn-flag">--backend</span> openai \
+  <span class="syn-flag">--base-url</span> http://<span class="syn-number">127.0</span>.<span class="syn-number">0.1</span>:<span class="syn-number">18080</span> \
+  <span class="syn-flag">--endpoint</span> /v1/completions \
+  <span class="syn-flag">--model</span> glm-<span class="syn-number">5</span> \
+  <span class="syn-flag">--tokenizer</span> /mnt/sdb/models/GLM-<span class="syn-number">5.1</span>-w8a8c8-MTP \
+  <span class="syn-flag">--dataset-name</span> custom \
+  <span class="syn-flag">--dataset-path</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/capacity-pools-20261024T110510324465Z/cap_49152/custom.jsonl \
+  <span class="syn-flag">--custom-output-len</span> -<span class="syn-number">1</span> \
+  <span class="syn-flag">--disable-shuffle</span> \
+  <span class="syn-flag">--skip-chat-template</span> \
+  <span class="syn-flag">--no-oversample</span> \
+  <span class="syn-flag">--num-prompts</span> <span class="syn-number">389</span> \
+  <span class="syn-flag">--max-concurrency</span> <span class="syn-number">4</span> \
+  <span class="syn-flag">--request-rate</span> inf \
+  <span class="syn-flag">--num-warmups</span> <span class="syn-number">0</span> \
+  <span class="syn-flag">--ready-check-timeout-sec</span> <span class="syn-number">0</span> \
+  <span class="syn-flag">--temperature</span> <span class="syn-number">0</span> \
+  <span class="syn-flag">--ignore-eos</span> \
+  <span class="syn-flag">--seed</span> <span class="syn-number">0</span> \
+  <span class="syn-flag">--percentile-metrics</span> ttft,tpot,itl,e2el \
+  <span class="syn-flag">--metric-percentiles</span> <span class="syn-number">50</span>,<span class="syn-number">90</span>,<span class="syn-number">95</span>,<span class="syn-number">99</span> \
+  <span class="syn-flag">--save-result</span> \
+  <span class="syn-flag">--save-detailed</span> \
+  <span class="syn-flag">--result-dir</span> /opt/ks-customer-bench-<span class="syn-number">20261024</span>/stages/on-async/customer-<span class="syn-number">49152</span>-formal \
+  <span class="syn-flag">--result-filename</span> benchmark.json</code></pre></details><p class="path">正式对照JSON：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\分析\正式三组对照\三组最终\正式三组对照.json</p><p class="path">不接LMCache：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\off\m12-20261024-205121-105499\stages\off\customer-49152-formal\benchmark.json</p><p class="path">原异步ON：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-async\m12-20261024-214936-092545\stages\on-async\customer-49152-formal-repeat2\benchmark.json</p><p class="path">同步＋提前读取ON：E:\work\ks\output\05_当前环境与实验准备\20261024_客户数据压测准备\原始采集\on-sync-prefetch\m12-20261024-221854-787975\stages\on-sync-prefetch\customer-49152-formal\benchmark.json</p><details><summary>统计脚本原始说明</summary><pre class="prose"># 客户48K原文：正式三组对照
+
+对齐状态：`COMPARABLE_389_ALL_THREE`。
+
+主口径为同一389条、C4、预热0、原序、逐条原输出。P使用49152／0.94；D仍65536／0.92＋4.5GiB，未重启。服务条件来自本轮计划，不能仅由benchmark JSON确认。
+
+**已知对照差异：两组ON的LMCache空缓存初态相同，P进程预热程度却不同。** 异步repeat2的同一P已跑过一整轮首轮；优化组使用fresh P，仅做过冷缓存最长诊断。因此主表给出本轮实测结果，不能单凭这些数值将全部变化归因于同步／提前READ代码。优化组均值受一个12.562秒请求显著影响，详见[逐条离群解析](优化TTFT离群解析.md)；主表仍完整保留389条。
+
+下表以官方聚合指标为主；未提供的ON留空。存在逐条不一致或失败时保留官方原值展示，但禁止据此自动宣布可比较。
+
+| 指标 | 不接LMCache（OFF） | 原异步ON | 同步提前读取ON |
+| --- | ---: | ---: | ---: |
+| 正式请求数 | 389 | 389 | 389 |
+| 官方成功数 | 389 | 389 | 389 |
+| 官方失败数 | 0 | 0 | 0 |
+| 指定并发C | 4 | 4 | 4 |
+| 正式持续时间（秒） | 1265.6014 | 1230.1531 | 1222.2157 |
+| 输入总token | 3907699 | 3907699 | 3907699 |
+| 成功请求平均输入token | 10045.4987 | 10045.4987 | 10045.4987 |
+| 输出总token | 191207 | 191207 | 191207 |
+| 成功请求平均输出token | 491.5347 | 491.5347 | 491.5347 |
+| 平均TTFT（秒） | 1.7081 | 1.3782 | 1.4034 |
+| 中位TTFT（秒） | 1.2591 | 1.2686 | 1.2157 |
+| 标准差TTFT（秒） | 0.9585 | 0.5370 | 0.7779 |
+| P95TTFT（秒） | 3.7569 | 2.6675 | 2.5376 |
+| P99TTFT（秒） | 4.9076 | 3.2593 | 3.2485 |
+| 平均TPOT（毫秒） | 23.0687 | 22.9286 | 22.7809 |
+| 中位TPOT（毫秒） | 22.7176 | 22.6556 | 22.5345 |
+| 标准差TPOT（毫秒） | 2.7517 | 2.7678 | 2.5535 |
+| P95TPOT（毫秒） | 28.4099 | 27.7349 | 27.6459 |
+| P99TPOT（毫秒） | 30.0663 | 30.5142 | 29.2309 |
+| 平均端到端耗时（秒） | 12.9325 | 12.5470 | 12.4967 |
+| 中位端到端耗时（秒） | 12.5886 | 12.1647 | 11.9821 |
+| 标准差端到端耗时（秒） | 5.4476 | 5.3629 | 5.3120 |
+| P95端到端耗时（秒） | 21.6505 | 21.0863 | 20.5620 |
+| P99端到端耗时（秒） | 23.6445 | 22.7883 | 22.7813 |
+| 平均流块间隔ITL（毫秒） | 67.0656 | 67.0894 | 67.0955 |
+| 中位流块间隔ITL（毫秒） | 67.1539 | 67.1745 | 67.1880 |
+| 标准差流块间隔ITL（毫秒） | 2.1846 | 2.1166 | 1.9901 |
+| P95流块间隔ITL（毫秒） | 68.6405 | 68.6611 | 68.6754 |
+| P99流块间隔ITL（毫秒） | 70.6065 | 70.6287 | 70.4795 |
+| 请求吞吐（req/s） | 0.3074 | 0.3162 | 0.3183 |
+| 输出吞吐（token/s） | 151.0800 | 155.4335 | 156.4429 |
+| 输入＋输出吞吐（token/s） | 3238.7021 | 3332.0293 | 3353.6684 |
+| 官方秒桶覆盖请求峰值（不等于配置C） | 7 | 7 | 7 |
+
+## 逐条对齐验收
+
+| 用例 | 状态 | 不一致项数 |
+| --- | --- | ---: |
+| 不接LMCache（OFF） | ALIGNED_389_C4 | 0 |
+| 原异步ON | ALIGNED_389_C4 | 0 |
+| 同步提前读取ON | ALIGNED_389_C4 | 0 |
+
+不一致的源行号和字段保存在JSON；没有静默剔除失败或长度不符记录。官方结果数组按请求列表顺序保存，和manifest候选行逐项对应；官方JSON不含原请求ID，因此这是顺序＋长度对齐，不是原文内容身份的独立证明。
+
+## 按GLM实际输入长度分桶
+
+此表使用逐条计时；分桶依据GLM实际输入长度，不使用原metadata bucket。K＝1024。
+
+| 输入长度／指标 | 不接LMCache（OFF） | 原异步ON | 同步提前读取ON |
+| --- | ---: | ---: | ---: |
+| 输入≤2K／请求数 | 131 | 131 | 131 |
+| 输入≤2K／平均TTFT秒 | 1.1691 | 1.0857 | 1.1205 |
+| 输入≤2K／平均端到端秒 | 12.3153 | 12.2001 | 12.1524 |
+| 输入≤2K／平均TPOT毫秒 | 23.6819 | 23.5135 | 23.3726 |
+| 输入2—4K／请求数 | 64 | 64 | 64 |
+| 输入2—4K／平均TTFT秒 | 1.2388 | 1.2486 | 1.3803 |
+| 输入2—4K／平均端到端秒 | 12.1730 | 12.0401 | 12.0461 |
+| 输入2—4K／平均TPOT毫秒 | 22.5949 | 22.4368 | 22.0627 |
+| 输入4—8K／请求数 | 53 | 53 | 53 |
+| 输入4—8K／平均TTFT秒 | 1.2840 | 1.1946 | 1.2227 |
+| 输入4—8K／平均端到端秒 | 12.6193 | 12.5258 | 12.5463 |
+| 输入4—8K／平均TPOT毫秒 | 22.1109 | 22.1373 | 22.1499 |
+| 输入8—16K／请求数 | 58 | 58 | 58 |
+| 输入8—16K／平均TTFT秒 | 1.8138 | 1.3664 | 1.3519 |
+| 输入8—16K／平均端到端秒 | 12.6470 | 11.9989 | 12.0265 |
+| 输入8—16K／平均TPOT毫秒 | 23.7780 | 23.2467 | 23.3521 |
+| 输入16—32K／请求数 | 57 | 57 | 57 |
+| 输入16—32K／平均TTFT秒 | 2.6946 | 1.7733 | 1.7522 |
+| 输入16—32K／平均端到端秒 | 13.9111 | 13.0234 | 12.9040 |
+| 输入16—32K／平均TPOT毫秒 | 22.7187 | 22.8448 | 22.6253 |
+| 输入32—48K／请求数 | 26 | 26 | 26 |
+| 输入32—48K／平均TTFT秒 | 4.0453 | 2.7058 | 2.6040 |
+| 输入32—48K／平均端到端秒 | 17.0429 | 15.7634 | 15.3959 |
+| 输入32—48K／平均TPOT毫秒 | 22.2833 | 22.2793 | 21.9201 |
+
+## 同一请求成对比较
+
+降低为正、变慢为负。平均值降幅＝(OFF均值−ON均值)/OFF均值；逐条降幅均值先对每条请求计算百分比再取平均，两者不能混称。
+
+| ON用例 | 指标 | OFF均值 | ON均值 | 平均值降低% | 逐条降低%均值 | 更快／更慢／相等 |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| 原异步ON | TTFT秒 | 1.7081 | 1.3782 | 19.3145 | 9.0289 | 242／147／0 |
+| 原异步ON | 端到端秒 | 12.9325 | 12.5470 | 2.9816 | 3.0022 | 257／132／0 |
+| 原异步ON | TPOT毫秒 | 23.0687 | 22.9286 | 0.6076 | 0.2816 | 216／173／0 |
+| 同步提前读取ON | TTFT秒 | 1.7081 | 1.4034 | 17.8407 | 5.7642 | 236／153／0 |
+| 同步提前读取ON | 端到端秒 | 12.9325 | 12.4967 | 3.3700 | 3.0212 | 250／139／0 |
+| 同步提前读取ON | TPOT毫秒 | 23.0687 | 22.7809 | 1.2479 | 0.8273 | 222／167／0 |
+
+原异步ON与OFF同条输出字符串完全相等：13／389（3.34%）；仅为字符串事实，不是精度证明。
+
+同步提前读取ON与OFF同条输出字符串完全相等：13／389（3.34%）；仅为字符串事实，不是精度证明。
+
+## 计时边界与来源
+
+- 官方平均／中位／P95／P99直接使用原JSON聚合值；未自行用另一套分位数算法替换。
+- 原JSON缺少latencies时，逐条端到端由TTFT＋sum(itls)重构，TPOT为(端到端−TTFT)/(实际输出token数−1)。JSON单列重构均值与官方端到端均值之差。
+- ITL是记录到的流块间隔；MTP一次流块可能含多个token，不能称作逐token间隔，也不能用流块数量代替输出token数。
+- max_concurrent_requests是按秒桶累计覆盖请求的统计，相邻请求可能落在同一秒桶，因此可大于4；配置并发看max_concurrency。
+- generated_texts只比较同条字符串完全相等比例，结果保存在JSON，不是精度证明；不在此报告复制输出文本。
+- 缓存命中、服务端Prefill／Decode和P→D传输计时不在这份官方JSON中，本脚本不推算或补造。
+
+- 不接LMCache（OFF）：[benchmark.json](E:/work/ks/output/05_当前环境与实验准备/20261024_客户数据压测准备/原始采集/off/m12-20261024-205121-105499/stages/off/customer-49152-formal/benchmark.json)；逐条E2E来源：RECONSTRUCTED: ttft + sum(recorded stream itls), seconds。
+- 原异步ON：[benchmark.json](E:/work/ks/output/05_当前环境与实验准备/20261024_客户数据压测准备/原始采集/on-async/m12-20261024-214936-092545/stages/on-async/customer-49152-formal-repeat2/benchmark.json)；逐条E2E来源：RECONSTRUCTED: ttft + sum(recorded stream itls), seconds。
+- 同步提前读取ON：[benchmark.json](E:/work/ks/output/05_当前环境与实验准备/20261024_客户数据压测准备/原始采集/on-sync-prefetch/m12-20261024-221854-787975/stages/on-sync-prefetch/customer-49152-formal/benchmark.json)；逐条E2E来源：RECONSTRUCTED: ttft + sum(recorded stream itls), seconds。
+</pre></details></section><footer>报告由本地正式数据生成；没有补造ON、命中率或服务端阶段值。实验复盘结构用于区分事实、解释和未知，不作产品上线判断。</footer></main></body></html>
