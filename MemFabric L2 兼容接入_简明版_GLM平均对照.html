@@ -1,0 +1,1727 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MemFabric L2 兼容接入 · 简明版</title>
+<style>
+:root{color-scheme:light;--paper:#f4f6f8;--ink:#182735;--muted:#4b5d6e;--line:#cdd7e0;--blue:#155871;--pale:#e6f0f5}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.65 "Segoe UI","Microsoft YaHei",sans-serif}
+main{max-width:1140px;margin:auto;padding:36px 25px 56px}header{border-top:5px solid var(--blue);padding-top:24px}
+h1{font-size:clamp(30px,5vw,50px);line-height:1.17;margin:5px 0 16px}h2{font-size:27px;margin:0 0 14px}h3{font-size:20px;margin:24px 0 9px}
+p{margin:8px 0 14px}nav{display:flex;flex-wrap:wrap;gap:8px 21px;border-bottom:1px solid var(--line);padding:13px 0;margin-bottom:25px}
+a{color:#07536e;text-underline-offset:3px}section{background:#fff;border:1px solid var(--line);padding:24px;margin:20px 0;scroll-margin-top:14px}
+.eyebrow,.source{font-size:14px;color:var(--muted)}.lead{font-size:18px;max-width:880px}.note{background:var(--pale);padding:12px 16px;border-left:3px solid var(--blue)}
+.table{overflow-x:auto;margin:12px 0 16px}table{width:100%;border-collapse:collapse;text-align:left;font-size:15px}
+th,td{padding:8px 11px;vertical-align:top;border:1px solid var(--line)}thead th{background:#e6f0f5}tbody th{background:#f5f8fa}tbody tr:nth-child(even) td{background:#f8fafc}
+.diagram{overflow-x:auto;margin:12px 0}.diagram svg{display:block;width:100%;min-width:770px;height:auto}figure{margin:16px 0}figcaption{color:var(--muted);font-size:14px}
+details{border:1px solid var(--line);margin:8px 0;background:#f8fafc}summary{padding:9px 13px;cursor:pointer;font-weight:600;color:#16455b}details[open]>.source{padding:3px 13px}
+.startup-originals{padding:0 12px 8px}
+pre{margin:8px 0 0;padding:14px;overflow:auto;max-height:34rem;background:#172635;color:#eef6fb;line-height:1.52;tab-size:4}code{font-family:Consolas,monospace;font-size:.89em}
+p code,td code,li code{overflow-wrap:anywhere}li{margin-bottom:6px}footer{color:var(--muted);font-size:14px}
+@media(max-width:650px){main{padding:20px 12px}section{padding:15px}}@media print{body,section{background:#fff}main{max-width:none;padding:0}section{border:0;padding:0}.table,.diagram{overflow:visible}tr{break-inside:avoid}pre{max-height:none;white-space:pre-wrap}}
+</style></head><body><main>
+<header>
+<p class="eyebrow">2026-11-06 · 汇报简明版</p>
+<h1>MemFabric L2 兼容接入</h1>
+<p class="lead">在 LMCache 的二级缓存（L2）接口下接入 MemFabric，沿用官方 LMCache core。接入代码分为适配器、BM 搬运封装和共享对象目录。后续章节列出实跑配置、跨机精度结果和性能对照方案。</p>
+<p><a href="%E8%B7%A8%E6%9C%BAKV%E6%8B%89%E5%8F%96%E5%AE%9E%E9%AA%8C%E6%B1%87%E6%8A%A5.html">打开详细版与原始证据</a></p>
+</header>
+<nav aria-label="目录"><a href="#changes">01 结构</a><a href="#startup">02 启动配置</a><a href="#accuracy">03 精度</a><a href="#performance">04 性能实测</a><a href="#appendix">附录</a></nav>
+
+<section id="changes">
+<h2>01　代码结构</h2>
+<p><strong><code>MemFabricL2Adapter</code></strong> 是 LMCache L2 的插件入口。它通过 <code>BMSession</code> 调用 MemFabric SDK 搬运 KV，通过 <code>DirectoryClient</code> 访问共享目录。目录的 HTTP 接口和对象状态分别由 <code>SharedDirectory</code>、<code>PoolDirectory</code> 负责。</p>
+<figure>
+<div class="diagram"><svg viewBox="0 0 1080 390" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="code-title code-desc">
+<title id="code-title">MemFabric L2 源码模块依赖</title>
+<desc id="code-desc">官方 LMCache 插件加载器加载 MemFabricL2Adapter。适配器依赖 BMSession 和 DirectoryClient。DirectoryClient 通过 HTTP 调用协调器的 SharedDirectory，后者加载 PoolDirectory。BMSession 调用原生 MemFabric SDK。</desc>
+<defs><marker id="dep-arrow" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0L9 4L0 8z" fill="#155871"/></marker></defs>
+<rect x="5" y="6" width="671" height="378" rx="8" fill="#eef4f7" stroke="#9bbaca"/>
+<rect x="737" y="6" width="338" height="378" rx="8" fill="#f3f6f9" stroke="#9bbaca"/>
+<g fill="#fff" stroke="#9bbaca">
+<rect x="181" y="49" width="322" height="42" rx="5"/>
+<rect x="145" y="120" width="395" height="57" rx="5"/>
+<rect x="27" y="236" width="287" height="59" rx="5"/>
+<rect x="347" y="236" width="310" height="59" rx="5"/>
+<rect x="46" y="336" width="249" height="31" rx="5"/>
+<rect x="758" y="236" width="294" height="59" rx="5"/>
+<rect x="758" y="324" width="294" height="49" rx="5"/>
+</g>
+<g text-anchor="middle" fill="#182735" font-family="Segoe UI, Microsoft YaHei, sans-serif">
+<g font-size="16"><text x="342" y="32">LMCache L2 插件与依赖</text><text x="904" y="32">共享目录模块</text><text x="342" y="76">官方 LMCache · L2 插件加载</text></g>
+<g font-size="14" font-family="Consolas, monospace"><text x="342" y="143">memfabric_l2_adapter.py</text><text x="170" y="259">memfabric_bm.py</text><text x="502" y="259">memfabric_directory_rpc.py</text><text x="904" y="259">pool_coordination.py</text><text x="904" y="344">memfabric_directory.py</text></g>
+<g font-size="14"><text x="342" y="163">MemFabricL2Adapter</text><text x="170" y="280">BMSession</text><text x="502" y="280">DirectoryClient</text><text x="904" y="280">SharedDirectory</text><text x="904" y="362">PoolDirectory</text><text x="170" y="357">原生 MemFabric SDK</text></g>
+</g>
+<g fill="none" stroke="#155871" stroke-width="1.7" marker-end="url(#dep-arrow)">
+<path d="M342 92V118"/><path d="M273 178V205H170V234"/><path d="M413 178V205H502V234"/>
+<path d="M170 296V334"/><path d="M658 266H756" stroke-dasharray="5 3"/><path d="M904 296V322"/>
+</g>
+<g fill="#155871" text-anchor="middle" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="12">
+<text x="384" y="110">按配置加载</text><text x="220" y="198">持有</text><text x="459" y="198">持有</text><text x="707" y="258">HTTP</text><text x="946" y="313">加载</text>
+</g>
+</svg></div>
+<figcaption>实线表示插件加载、类的依赖或 SDK 调用。虚线表示目录客户端通过 HTTP 调用共享目录接口。</figcaption>
+</figure>
+<div class="table"><table><thead><tr><th scope="col">源文件</th><th scope="col">类</th><th scope="col">这个文件管什么</th></tr></thead><tbody>
+<tr><th scope="row"><a href="../../routes/l2/coreless/shared-ddr/lmcache_ascend/v1/distributed/memfabric_l2_adapter.py"><code>memfabric_l2_adapter.py</code></a></th><td><code>MemFabricL2Adapter</code></td><td>实现官方 <code>L2AdapterInterface</code>，把目录操作交给 RPC 客户端，把 KV 搬运交给 BM。</td></tr>
+<tr><th scope="row"><a href="../../routes/l2/coreless/shared-ddr/lmcache_ascend/v1/distributed/memfabric_bm.py"><code>memfabric_bm.py</code></a></th><td><code>BMSession</code></td><td>封装 MemFabric SDK 会话与数据搬运，管理内存注册和复制。</td></tr>
+<tr><th scope="row"><a href="../../routes/l2/coreless/shared-ddr/lmcache_ascend/v1/distributed/memfabric_directory_rpc.py"><code>memfabric_directory_rpc.py</code></a></th><td><code>DirectoryClient</code></td><td>服务进程内的 HTTP 客户端，把目录请求发给协调器。</td></tr>
+<tr><th scope="row"><a href="../../routes/l2/coreless/shared-ddr/examples/memfabric/pool_coordination.py"><code>pool_coordination.py</code></a></th><td><code>SharedDirectory</code></td><td>提供目录 HTTP 接口，校验访问方与目录实例，加载 <code>PoolDirectory</code>。</td></tr>
+<tr><th scope="row"><a href="../../routes/l2/coreless/shared-ddr/lmcache_ascend/v1/distributed/memfabric_directory.py"><code>memfabric_directory.py</code></a></th><td><code>PoolDirectory</code></td><td>保存对象键、槽位、发布状态和读锁，决定何时回收槽位。</td></tr>
+</tbody></table></div>
+<p class="source">跨机共享这次改动新增了目录和 RPC 客户端，并把它们接入已有的适配器、协调器和 BM 会话。<a href="%E8%B7%A8%E6%9C%BAKV%E6%8B%89%E5%8F%96%E5%AE%9E%E9%AA%8C%E6%B1%87%E6%8A%A5.html#changes">查看逐文件改动、提交与原始 Git diff</a></p>
+</section>
+
+<section id="startup">
+<h2>02　启动配置</h2>
+<div class="table"><table><thead><tr><th scope="col">参数</th><th scope="col">137 写入端</th><th scope="col">8 号机拉取端</th></tr></thead><tbody>
+<tr><th scope="row">模型与拓扑</th><td colspan="2">每机一套 GLM-5.1-W8A8C8-MTP，TP16／DP1／PP1、EP 开、MTP3、eager</td></tr>
+<tr><th scope="row">调度上限</th><td colspan="2">上下文 20,480，批 token 上限 4,096，最大序列数 64，显存利用率 0.96</td></tr>
+<tr><th scope="row">缓存与传输</th><td colspan="2">APC 关闭，每机 CPU L1 32 GiB，chunk 128 token。BM DEVICE_RDMA，137 提供 8 GiB 池，16 MiB 槽，逐对象注册。</td></tr>
+<tr><th scope="row">模型／服务 TASK_QUEUE_ENABLE</th><td><code>1 / 1</code></td><td><code>0 / 1</code></td></tr>
+<tr><th scope="row">运行依赖</th><td colspan="2">官方 LMCache core、含 MemFabric L2 插件的 LMCache-Ascend、MemFabric SDK 1.2.1</td></tr>
+</tbody></table></div>
+<p>下列命令按当时实跑参数展开为 <code>lmcache server</code> 和 <code>vllm serve</code>。在对应机器的实验容器内，分别给 LMCache 和 vLLM 的终端配置环境变量。共享目录和 BM 协调服务就绪后，两端启动 LMCache，确认服务健康再启动 vLLM。两种命令均会使用 NPU。</p>
+<p class="source">历史 LMCache 启动入口还显式初始化了 NPU 0。本页的原生命令已对账实际参数，尚未单独上机复验。</p>
+<h3>137 写入端</h3><details><summary>环境变量 · 两个终端分别执行</summary><pre tabindex="0"><code>export RUNTIME_BIN=/workspace/d00896497/l2_service_20261102_1930/runtime_no_mooncake/bin
+export LM_SRC=/workspace/d00896497/glm51_shared_ddr_20261103/src
+export MF_SDK=/workspace/d00896497/glm51_shared_ddr_20261103/runtime_sdk121
+export HOME=/workspace/d00896497/glm51_on_20261104/runtime_home
+export PATH=&quot;$RUNTIME_BIN:/workspace/d00896497/glm51_on_20261104/bin:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/bin:/usr/local/Ascend/ascend-toolkit/latest/bin:/usr/local/Ascend/ascend-toolkit/latest/compiler/ccec_compiler/bin:/usr/local/Ascend/ascend-toolkit/latest/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/show_kernel_debug_data:/usr/local/Ascend/cann-9.1.0/tools/msobjdump:/usr/local/Ascend/cann-9.1.0/bin:/usr/local/Ascend/cann-9.1.0/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/profiler/bin:/usr/local/Ascend/cann-9.1.0/tools/ascend_system_advisor/asys:/usr/local/python3.12.13/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin&quot;
+export PYTHONPATH=&quot;$MF_SDK:$LM_SRC/LMCache:$LM_SRC/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages&quot;
+export LD_LIBRARY_PATH=&quot;$MF_SDK/memfabric_hybrid/lib:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/cann-9.1.0/lib64:$LD_LIBRARY_PATH&quot;
+export LMCACHE_CORE_SOURCE=&quot;$LM_SRC/LMCache&quot;
+export PYTHONNOUSERSITE=1
+export VLLM_ASCEND_ENABLE_FUSED_MC2=1
+export HCCL_OP_EXPANSION_MODE=AIV
+export OMP_PROC_BIND=false
+export OMP_NUM_THREADS=1
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+export HCCL_BUFFSIZE=400
+export ACL_OP_INIT_MODE=1
+export ASCEND_A3_ENABLE=1
+export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
+export PYTHONHASHSEED=0
+export TOKENIZERS_PARALLELISM=false
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+export ASCEND_RT_VISIBLE_DEVICES=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
+export HCCL_IF_IP=192.168.0.223
+NIC=&quot;$(ip -o -4 addr show | awk -v ip=&quot;$HCCL_IF_IP&quot; &#x27;{split($4, addr, &quot;/&quot;); if (addr[1] == ip) {print $2; exit}}&#x27;)&quot;
+export HCCL_SOCKET_IFNAME=&quot;$NIC&quot; GLOO_SOCKET_IFNAME=&quot;$NIC&quot; TP_SOCKET_IFNAME=&quot;$NIC&quot;
+unset VLLM_PP_LAYER_PARTITION</code></pre></details><details><summary>lmcache server</summary><pre tabindex="0"><code>export TASK_QUEUE_ENABLE=1
+
+lmcache server \
+  --host 127.0.0.1 \
+  --port 25780 \
+  --http-host 127.0.0.1 \
+  --http-port 44620 \
+  --prometheus-port 44621 \
+  --chunk-size 128 \
+  --l1-size-gb 32 \
+  --max-gpu-workers 16 \
+  --eviction-policy LRU \
+  --supported-transfer-mode lmcache_driven \
+  --l2-adapter &#x27;{&quot;type&quot;: &quot;plugin&quot;, &quot;module_path&quot;: &quot;lmcache_ascend.v1.distributed.memfabric_l2_adapter&quot;, &quot;class_name&quot;: &quot;MemFabricL2Adapter&quot;, &quot;shared&quot;: true, &quot;adapter_params&quot;: {&quot;shared_directory&quot;: true, &quot;rank_id&quot;: 0, &quot;device_id&quot;: 1, &quot;world_size&quot;: 2, &quot;storage_rank&quot;: 0, &quot;pool_gb&quot;: 8, &quot;slot_size_mb&quot;: 16, &quot;data_op_type&quot;: &quot;DEVICE_RDMA&quot;, &quot;enable_56bits_gva&quot;: true, &quot;device_nic&quot;: &quot;tcp://192.168.0.223:29982&quot;, &quot;store_url&quot;: &quot;tcp://192.168.0.223:29980&quot;, &quot;join_coord_url&quot;: &quot;http://192.168.0.223:29981&quot;, &quot;join_group_id&quot;: &quot;glm51-shared-on-8-137-20261104-cross-r06&quot;}}&#x27;</code></pre></details><details><summary>vllm serve</summary><pre tabindex="0"><code>export TASK_QUEUE_ENABLE=1
+
+vllm serve /workspace/d00896497/models/GLM-5.1-W8A8C8-MTP \
+  --host 0.0.0.0 \
+  --port 28220 \
+  --data-parallel-size 1 \
+  --tensor-parallel-size 16 \
+  --enable-expert-parallel \
+  --pipeline-parallel-size 1 \
+  --distributed-executor-backend mp \
+  --hf-overrides &#x27;{&quot;use_index_cache&quot;: true, &quot;index_topk_freq&quot;: 4}&#x27; \
+  --speculative-config &#x27;{&quot;num_speculative_tokens&quot;: 3, &quot;method&quot;: &quot;deepseek_mtp&quot;, &quot;enforce_eager&quot;: true}&#x27; \
+  --seed 1024 \
+  --served-model-name glm-5 \
+  --max-model-len 20480 \
+  --additional-config &#x27;{&quot;fuse_muls_add&quot;: true, &quot;recompute_scheduler_enable&quot;: false, &quot;multistream_overlap_shared_expert&quot;: true, &quot;enable_dsa_cp&quot;: true, &quot;enable_sparse_sfa_c8&quot;: true, &quot;enable_sparse_li_c8&quot;: true, &quot;c8_enable_reshape_optim&quot;: true}&#x27; \
+  --max-num-batched-tokens 4096 \
+  --trust-remote-code \
+  --no-enable-prefix-caching \
+  --max-num-seqs 64 \
+  --quantization ascend \
+  --gpu-memory-utilization 0.96 \
+  --enforce-eager \
+  --enable-auto-tool-choice \
+  --tool-call-parser glm47 \
+  --reasoning-parser glm45 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;: &quot;LMCacheMPConnector&quot;, &quot;kv_role&quot;: &quot;kv_both&quot;, &quot;kv_connector_module_path&quot;: &quot;lmcache.integration.vllm.lmcache_mp_connector&quot;, &quot;kv_connector_extra_config&quot;: {&quot;lmcache.mp.host&quot;: &quot;tcp://127.0.0.1&quot;, &quot;lmcache.mp.port&quot;: 25780, &quot;lmcache.mp.mp_transfer_mode&quot;: &quot;lmcache_driven&quot;}}&#x27;</code></pre></details>
+<h3>8 号机拉取端</h3><details><summary>环境变量 · 两个终端分别执行</summary><pre tabindex="0"><code>export RUNTIME_BIN=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin
+export LM_SRC=/workspace/d00896497/glm51_on_20261104/src
+export MF_SDK=/workspace/d00896497/glm51_on_20261104/runtime_sdk121
+export HOME=/workspace/d00896497/glm51_on_20261104/runtime_home
+export PATH=&quot;$RUNTIME_BIN:/workspace/d00896497/glm51_on_20261104/bin:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/bin:/usr/local/Ascend/ascend-toolkit/latest/bin:/usr/local/Ascend/ascend-toolkit/latest/compiler/ccec_compiler/bin:/usr/local/Ascend/ascend-toolkit/latest/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/show_kernel_debug_data:/usr/local/Ascend/cann-9.1.0/tools/msobjdump:/usr/local/Ascend/cann-9.1.0/bin:/usr/local/Ascend/cann-9.1.0/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/profiler/bin:/usr/local/Ascend/cann-9.1.0/tools/ascend_system_advisor/asys:/usr/local/python3.12.13/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin&quot;
+export PYTHONPATH=&quot;$MF_SDK:$LM_SRC/LMCache:$LM_SRC/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages&quot;
+export LD_LIBRARY_PATH=&quot;$MF_SDK/memfabric_hybrid/lib:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/cann-9.1.0/lib64:$LD_LIBRARY_PATH&quot;
+export LMCACHE_CORE_SOURCE=&quot;$LM_SRC/LMCache&quot;
+export PYTHONNOUSERSITE=1
+export VLLM_ASCEND_ENABLE_FUSED_MC2=1
+export HCCL_OP_EXPANSION_MODE=AIV
+export OMP_PROC_BIND=false
+export OMP_NUM_THREADS=1
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+export HCCL_BUFFSIZE=400
+export ACL_OP_INIT_MODE=1
+export ASCEND_A3_ENABLE=1
+export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
+export PYTHONHASHSEED=0
+export TOKENIZERS_PARALLELISM=false
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+export ASCEND_RT_VISIBLE_DEVICES=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
+export HCCL_IF_IP=192.168.0.110
+NIC=&quot;$(ip -o -4 addr show | awk -v ip=&quot;$HCCL_IF_IP&quot; &#x27;{split($4, addr, &quot;/&quot;); if (addr[1] == ip) {print $2; exit}}&#x27;)&quot;
+export HCCL_SOCKET_IFNAME=&quot;$NIC&quot; GLOO_SOCKET_IFNAME=&quot;$NIC&quot; TP_SOCKET_IFNAME=&quot;$NIC&quot;
+unset VLLM_PP_LAYER_PARTITION</code></pre></details><details><summary>lmcache server</summary><pre tabindex="0"><code>export TASK_QUEUE_ENABLE=1
+
+lmcache server \
+  --host 127.0.0.1 \
+  --port 25780 \
+  --http-host 127.0.0.1 \
+  --http-port 44620 \
+  --prometheus-port 44621 \
+  --chunk-size 128 \
+  --l1-size-gb 32 \
+  --max-gpu-workers 16 \
+  --eviction-policy LRU \
+  --supported-transfer-mode lmcache_driven \
+  --l2-adapter &#x27;{&quot;type&quot;: &quot;plugin&quot;, &quot;module_path&quot;: &quot;lmcache_ascend.v1.distributed.memfabric_l2_adapter&quot;, &quot;class_name&quot;: &quot;MemFabricL2Adapter&quot;, &quot;shared&quot;: true, &quot;adapter_params&quot;: {&quot;shared_directory&quot;: true, &quot;rank_id&quot;: 1, &quot;device_id&quot;: 1, &quot;world_size&quot;: 2, &quot;storage_rank&quot;: 0, &quot;pool_gb&quot;: 8, &quot;slot_size_mb&quot;: 16, &quot;data_op_type&quot;: &quot;DEVICE_RDMA&quot;, &quot;enable_56bits_gva&quot;: true, &quot;device_nic&quot;: &quot;tcp://192.168.0.110:29982&quot;, &quot;store_url&quot;: &quot;tcp://192.168.0.223:29980&quot;, &quot;join_coord_url&quot;: &quot;http://192.168.0.223:29981&quot;, &quot;join_group_id&quot;: &quot;glm51-shared-on-8-137-20261104-cross-r06&quot;}}&#x27;</code></pre></details><details><summary>vllm serve</summary><pre tabindex="0"><code>export TASK_QUEUE_ENABLE=0
+
+vllm serve /workspace/d00896497/models/GLM-5.1-W8A8C8-MTP \
+  --host 0.0.0.0 \
+  --port 28220 \
+  --data-parallel-size 1 \
+  --tensor-parallel-size 16 \
+  --enable-expert-parallel \
+  --pipeline-parallel-size 1 \
+  --distributed-executor-backend mp \
+  --hf-overrides &#x27;{&quot;use_index_cache&quot;: true, &quot;index_topk_freq&quot;: 4}&#x27; \
+  --speculative-config &#x27;{&quot;num_speculative_tokens&quot;: 3, &quot;method&quot;: &quot;deepseek_mtp&quot;, &quot;enforce_eager&quot;: true}&#x27; \
+  --seed 1024 \
+  --served-model-name glm-5 \
+  --max-model-len 20480 \
+  --additional-config &#x27;{&quot;fuse_muls_add&quot;: true, &quot;recompute_scheduler_enable&quot;: false, &quot;multistream_overlap_shared_expert&quot;: true, &quot;enable_dsa_cp&quot;: true, &quot;enable_sparse_sfa_c8&quot;: true, &quot;enable_sparse_li_c8&quot;: true, &quot;c8_enable_reshape_optim&quot;: true}&#x27; \
+  --max-num-batched-tokens 4096 \
+  --trust-remote-code \
+  --no-enable-prefix-caching \
+  --max-num-seqs 64 \
+  --quantization ascend \
+  --gpu-memory-utilization 0.96 \
+  --enforce-eager \
+  --enable-auto-tool-choice \
+  --tool-call-parser glm47 \
+  --reasoning-parser glm45 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;: &quot;LMCacheMPConnector&quot;, &quot;kv_role&quot;: &quot;kv_both&quot;, &quot;kv_connector_module_path&quot;: &quot;lmcache.integration.vllm.lmcache_mp_connector&quot;, &quot;kv_connector_extra_config&quot;: {&quot;lmcache.mp.host&quot;: &quot;tcp://127.0.0.1&quot;, &quot;lmcache.mp.port&quot;: 25780, &quot;lmcache.mp.mp_transfer_mode&quot;: &quot;lmcache_driven&quot;}}&#x27;</code></pre></details>
+</section>
+
+<section id="accuracy">
+<h2>03　跨机拉取精度</h2>
+<p>137 先计算并写入 KV，8 号机收到同一题后拉取前缀并作答。逐题核对实际读池字节和 token 来源。</p>
+<div class="table"><table><thead><tr><th scope="col">用例</th><th scope="col">137 计算</th><th scope="col">8 跨机拉取</th><th scope="col">8 同服务重算</th></tr></thead><tbody>
+<tr><th scope="row">F1 基础恢复</th><td>完成写入</td><td>恢复 4,096／重算 17 token，读回约 281 MiB，完整答对</td><td>未执行</td></tr>
+<tr><th scope="row">NIAH · 4K／16K 六题</th><td>6/6 正确</td><td>6/6 正确，六题答案均一致</td><td>未执行</td></tr>
+<tr><th scope="row">MMLU · 20 题</th><td>19/20 正确</td><td>19/20 正确，20/20 核实实际跨机拉取。与 137 答案一致 18/20。</td><td>18/20 正确。与 8 拉取答案一致 19/20。</td></tr>
+</tbody></table></div>
+<p>同一 8 号服务在强制重算时也出现同题答案变化。现有结果支持真实拉取和完整作答，严格答案等价与 KV 逐字节一致性仍待验证。</p>
+<p class="source"><a href="%E8%B7%A8%E6%9C%BAKV%E6%8B%89%E5%8F%96%E5%AE%9E%E9%AA%8C%E6%B1%87%E6%8A%A5.html#accuracy">查看差异题、逐题证据和原始精度命令</a></p>
+</section>
+
+<section id="performance">
+<h2>04　GLM-5.1 端到端性能对照</h2>
+<div id="glm-comparison">
+<p>本轮比较两套双机 DDR 池化方案。MemFabric 兼容 L2 使用 <code>DEVICE_RDMA</code>，Mooncake Store 使用经典 TE 的 <code>ascend</code> 传输。137 和 25 各提供 8 GiB DDR，各运行一套 GLM-5.1。由 137 预填并写池，25 号机发出正式请求。</p>
+<div id="glm-deltas">
+<h3>4K 输入 · 三组配对用例的平均结果</h3>
+<div class="table"><table><thead><tr><th scope="col">指标</th><th scope="col">MemFabric 兼容 L2 + DEVICE_RDMA</th><th scope="col">Mooncake Store + 经典 TE（ascend）</th><th scope="col">MemFabric 相对 Mooncake</th></tr></thead><tbody><tr><th scope="row">首 token 延迟（TTFT，ms）</th><td>5052.84</td><td>4918.30</td><td><strong>慢 2.7%</strong></td></tr><tr><th scope="row">每输出 token 耗时（TPOT，ms/token）</th><td>146.92</td><td>159.12</td><td><strong>快 7.7%</strong></td></tr><tr><th scope="row">完整响应耗时（s）</th><td>41.850</td><td>45.586</td><td><strong>快 8.2%</strong></td></tr><tr><th scope="row">输出吞吐（token/s）</th><td>15.52</td><td>13.12</td><td><strong>增加 18.2%</strong></td></tr><tr><th scope="row">输入吞吐（token/s）</th><td>303.96</td><td>276.70</td><td><strong>增加 9.9%</strong></td></tr><tr><th scope="row">请求吞吐（req/s）</th><td>0.0742</td><td>0.0676</td><td><strong>增加 9.9%</strong></td></tr></tbody></table></div>
+<p>三组 4K 配对用例等权，每后端共 24 条成功请求。每组先计算请求时延均值和该批吞吐，再对三组指标取算术平均。16K 配对组单列在附录，4K 中各侧的成功请求均纳入平均。</p>
+<p>两套方案的池管理、对象放置和传输路径均不同。表中差异反映两套方案在指定负载下的端到端表现。MemFabric 兼容 L2 搭配 Mooncake TE 的组合本轮未验证，现有数据无法拆分传输层单独贡献。</p>
+<p class="source"><a href="#glm-case-data">逐用例详细数据、读池对账与压测命令</a></p>
+</div>
+<h4>启动配置</h4>
+<div class="table"><table><thead><tr><th scope="col">参数</th><th scope="col">MemFabric L2</th><th scope="col">Mooncake Store／Ascend Direct TE</th></tr></thead><tbody>
+<tr><th scope="row">模型与调度</th><td colspan="2">每台 TP16／DP1／PP1，EP 开，MTP3，eager，APC 关。上下文 20,480，批 token 4,096，最大序列 64，显存利用率 0.96。模型／服务 TASK_QUEUE_ENABLE 在 137 为 1／1、25 为 0／1。</td></tr>
+<tr><th scope="row">LMCache</th><td colspan="2">每台 CPU L1 32 GiB、chunk 128 token；MP 25780、状态 HTTP 44620、指标 44621，模型 API 28220。官方 core，兼容 L2 使用本轮的双端 DDR 版本。</td></tr>
+<tr><th scope="row">后端</th><td>BM DEVICE_RDMA、HOST、56-bit GVA、逐对象注册。两端各 512 个 16 MiB 槽，由共享目录分配。137 上的协调端口 31081。</td><td>经典 Ascend Direct TE，<code>protocol=ascend</code>、<code>MC_USE_TENT=0</code>。两端各有一个 8 GiB owner，LMCache 客户端自身贡献为 0。master／metadata 在 137。</td></tr>
+</tbody></table></div>
+<p>以下按实跑参数展开为原生 CLI，环境变量与命令均可在本页复制。MemFabric 原入口显式初始化了 NPU 0。Mooncake 实跑还在 LMCache 进程内加载了原生桥接模块并初始化 NPU 0，保留继承的 CANN／ATB 库路径。这些原生 CLI 形式尚未单独上机复验。</p>
+<details><summary>MemFabric · 原生启动命令与环境变量</summary><div class="startup-originals"><details><summary>137 号机 · 主测</summary><details><summary>公共环境变量 · 每个角色终端先执行</summary><pre tabindex="0"><code>export ACL_OP_INIT_MODE=1
+export ASCEND_A3_ENABLE=1
+export ASCEND_RT_VISIBLE_DEVICES=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
+export HCCL_BUFFSIZE=400
+export HCCL_OP_EXPANSION_MODE=AIV
+export HF_HUB_OFFLINE=1
+export OMP_NUM_THREADS=1
+export OMP_PROC_BIND=false
+export PATH=/workspace/d00896497/l2_service_20261102_1930/runtime_no_mooncake/bin:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/bin:/usr/local/Ascend/ascend-toolkit/latest/bin:/usr/local/Ascend/ascend-toolkit/latest/compiler/ccec_compiler/bin:/usr/local/Ascend/ascend-toolkit/latest/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/show_kernel_debug_data:/usr/local/Ascend/cann-9.1.0/tools/msobjdump:/usr/local/Ascend/cann-9.1.0/bin:/usr/local/Ascend/cann-9.1.0/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/profiler/bin:/usr/local/Ascend/cann-9.1.0/tools/ascend_system_advisor/asys:/usr/local/python3.12.13/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PYTHONHASHSEED=0
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+export TOKENIZERS_PARALLELISM=false
+export TRANSFORMERS_OFFLINE=1
+export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
+export VLLM_ASCEND_ENABLE_FUSED_MC2=1
+export HOME=/workspace/d00896497/glm51_aggregate_20261106_m02/runtime-home
+export PYTHONNOUSERSITE=1
+export PYTHONDONTWRITEBYTECODE=1
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/glm51_shared_ddr_20261103/src/LMCache
+export PYTHONPATH=/workspace/d00896497/glm51_on_20261104/runtime_sdk121:/workspace/d00896497/glm51_shared_ddr_20261103/src/LMCache:/workspace/d00896497/multi_owner_dual_20261106_r01/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages
+export HCCL_IF_IP=192.168.0.223
+export GLOO_SOCKET_IFNAME=enp23s0f3
+export TP_SOCKET_IFNAME=enp23s0f3
+export HCCL_SOCKET_IFNAME=enp23s0f3
+export LD_LIBRARY_PATH=&quot;/workspace/d00896497/glm51_on_20261104/runtime_sdk121/memfabric_hybrid/lib:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/cann-9.1.0/lib64:$LD_LIBRARY_PATH&quot;
+unset ASCEND_ENABLE_USE_FABRIC_MEM VLLM_PP_LAYER_PARTITION</code></pre></details><details><summary>共享目录协调器 · 原生入口</summary><pre tabindex="0"><code>/workspace/d00896497/l2_service_20261102_1930/runtime_no_mooncake/bin/python -u /workspace/d00896497/multi_owner_dual_20261106_r01/LMCache-Ascend/examples/memfabric/pool_coordination.py \
+  --bind 192.168.0.223 \
+  --port 31081 \
+  --directory /workspace/d00896497/glm51_aggregate_20261106_m02/events \
+  --run-id glm51-aggregate-137-25-20261106-m02 \
+  --shared-l2 \
+  --storage-ranks 0 1 \
+  --pool-gb 8 \
+  --slot-size-mb 16</code></pre></details><details><summary>lmcache server</summary><pre tabindex="0"><code>export TASK_QUEUE_ENABLE=1
+
+lmcache server \
+  --host 127.0.0.1 \
+  --port 25780 \
+  --http-host 192.168.0.223 \
+  --http-port 44620 \
+  --prometheus-port 44621 \
+  --chunk-size 128 \
+  --l1-size-gb 32 \
+  --max-gpu-workers 16 \
+  --eviction-policy LRU \
+  --supported-transfer-mode lmcache_driven \
+  --l2-adapter &#x27;{&quot;adapter_params&quot;:{&quot;data_op_type&quot;:&quot;DEVICE_RDMA&quot;,&quot;device_id&quot;:1,&quot;device_nic&quot;:&quot;tcp://192.168.0.223:31082&quot;,&quot;enable_56bits_gva&quot;:true,&quot;join_coord_url&quot;:&quot;http://192.168.0.223:31081&quot;,&quot;join_group_id&quot;:&quot;glm51-aggregate-137-25-20261106-m02&quot;,&quot;pool_gb&quot;:8,&quot;rank_id&quot;:0,&quot;shared_directory&quot;:true,&quot;slot_size_mb&quot;:16,&quot;store_url&quot;:&quot;tcp://192.168.0.223:31080&quot;,&quot;world_size&quot;:2,&quot;storage_ranks&quot;:[0,1]},&quot;class_name&quot;:&quot;MemFabricL2Adapter&quot;,&quot;module_path&quot;:&quot;lmcache_ascend.v1.distributed.memfabric_l2_adapter&quot;,&quot;shared&quot;:true,&quot;type&quot;:&quot;plugin&quot;}&#x27;</code></pre></details><details><summary>vllm serve</summary><pre tabindex="0"><code>export TASK_QUEUE_ENABLE=1
+
+vllm serve /workspace/d00896497/models/GLM-5.1-W8A8C8-MTP \
+  --host 0.0.0.0 \
+  --port 28220 \
+  --data-parallel-size 1 \
+  --tensor-parallel-size 16 \
+  --enable-expert-parallel \
+  --pipeline-parallel-size 1 \
+  --distributed-executor-backend mp \
+  --hf-overrides &#x27;{&quot;use_index_cache&quot;: true, &quot;index_topk_freq&quot;: 4}&#x27; \
+  --speculative-config &#x27;{&quot;num_speculative_tokens&quot;: 3, &quot;method&quot;: &quot;deepseek_mtp&quot;, &quot;enforce_eager&quot;: true}&#x27; \
+  --seed 1024 \
+  --served-model-name glm-5 \
+  --max-model-len 20480 \
+  --additional-config &#x27;{&quot;fuse_muls_add&quot;: true, &quot;recompute_scheduler_enable&quot;: false, &quot;multistream_overlap_shared_expert&quot;: true, &quot;enable_dsa_cp&quot;: true, &quot;enable_sparse_sfa_c8&quot;: true, &quot;enable_sparse_li_c8&quot;: true, &quot;c8_enable_reshape_optim&quot;: true}&#x27; \
+  --max-num-batched-tokens 4096 \
+  --trust-remote-code \
+  --no-enable-prefix-caching \
+  --max-num-seqs 64 \
+  --quantization ascend \
+  --gpu-memory-utilization 0.96 \
+  --enforce-eager \
+  --enable-auto-tool-choice \
+  --tool-call-parser glm47 \
+  --reasoning-parser glm45 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;:&quot;LMCacheMPConnector&quot;,&quot;kv_role&quot;:&quot;kv_both&quot;,&quot;kv_connector_module_path&quot;:&quot;lmcache.integration.vllm.lmcache_mp_connector&quot;,&quot;kv_connector_extra_config&quot;:{&quot;lmcache.mp.host&quot;:&quot;tcp://127.0.0.1&quot;,&quot;lmcache.mp.port&quot;:25780,&quot;lmcache.mp.mp_transfer_mode&quot;:&quot;lmcache_driven&quot;}}&#x27;</code></pre></details></details><details><summary>137 号机 · 补测</summary><details><summary>公共环境变量 · 每个角色终端先执行</summary><pre tabindex="0"><code>export ACL_OP_INIT_MODE=1
+export ASCEND_A3_ENABLE=1
+export ASCEND_RT_VISIBLE_DEVICES=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
+export HCCL_BUFFSIZE=400
+export HCCL_OP_EXPANSION_MODE=AIV
+export HF_HUB_OFFLINE=1
+export OMP_NUM_THREADS=1
+export OMP_PROC_BIND=false
+export PATH=/workspace/d00896497/l2_service_20261102_1930/runtime_no_mooncake/bin:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/bin:/usr/local/Ascend/ascend-toolkit/latest/bin:/usr/local/Ascend/ascend-toolkit/latest/compiler/ccec_compiler/bin:/usr/local/Ascend/ascend-toolkit/latest/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/show_kernel_debug_data:/usr/local/Ascend/cann-9.1.0/tools/msobjdump:/usr/local/Ascend/cann-9.1.0/bin:/usr/local/Ascend/cann-9.1.0/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/profiler/bin:/usr/local/Ascend/cann-9.1.0/tools/ascend_system_advisor/asys:/usr/local/python3.12.13/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PYTHONHASHSEED=0
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+export TOKENIZERS_PARALLELISM=false
+export TRANSFORMERS_OFFLINE=1
+export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
+export VLLM_ASCEND_ENABLE_FUSED_MC2=1
+export HOME=/workspace/d00896497/glm51_aggregate_20261106_m03/runtime-home
+export PYTHONNOUSERSITE=1
+export PYTHONDONTWRITEBYTECODE=1
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/glm51_shared_ddr_20261103/src/LMCache
+export PYTHONPATH=/workspace/d00896497/glm51_on_20261104/runtime_sdk121:/workspace/d00896497/glm51_shared_ddr_20261103/src/LMCache:/workspace/d00896497/multi_owner_dual_20261106_r01/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages
+export HCCL_IF_IP=192.168.0.223
+export GLOO_SOCKET_IFNAME=enp23s0f3
+export TP_SOCKET_IFNAME=enp23s0f3
+export HCCL_SOCKET_IFNAME=enp23s0f3
+export LD_LIBRARY_PATH=&quot;/workspace/d00896497/glm51_on_20261104/runtime_sdk121/memfabric_hybrid/lib:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/cann-9.1.0/lib64:$LD_LIBRARY_PATH&quot;
+unset ASCEND_ENABLE_USE_FABRIC_MEM VLLM_PP_LAYER_PARTITION</code></pre></details><details><summary>共享目录协调器 · 原生入口</summary><pre tabindex="0"><code>/workspace/d00896497/l2_service_20261102_1930/runtime_no_mooncake/bin/python -u /workspace/d00896497/multi_owner_dual_20261106_r01/LMCache-Ascend/examples/memfabric/pool_coordination.py \
+  --bind 192.168.0.223 \
+  --port 31081 \
+  --directory /workspace/d00896497/glm51_aggregate_20261106_m03/events \
+  --run-id glm51-aggregate-137-25-20261106-m03 \
+  --shared-l2 \
+  --storage-ranks 0 1 \
+  --pool-gb 8 \
+  --slot-size-mb 16</code></pre></details><details><summary>lmcache server</summary><pre tabindex="0"><code>export TASK_QUEUE_ENABLE=1
+
+lmcache server \
+  --host 127.0.0.1 \
+  --port 25780 \
+  --http-host 192.168.0.223 \
+  --http-port 44620 \
+  --prometheus-port 44621 \
+  --chunk-size 128 \
+  --l1-size-gb 32 \
+  --max-gpu-workers 16 \
+  --eviction-policy LRU \
+  --supported-transfer-mode lmcache_driven \
+  --l2-adapter &#x27;{&quot;adapter_params&quot;:{&quot;data_op_type&quot;:&quot;DEVICE_RDMA&quot;,&quot;device_id&quot;:1,&quot;device_nic&quot;:&quot;tcp://192.168.0.223:31082&quot;,&quot;enable_56bits_gva&quot;:true,&quot;join_coord_url&quot;:&quot;http://192.168.0.223:31081&quot;,&quot;join_group_id&quot;:&quot;glm51-aggregate-137-25-20261106-m03&quot;,&quot;pool_gb&quot;:8,&quot;rank_id&quot;:0,&quot;shared_directory&quot;:true,&quot;slot_size_mb&quot;:16,&quot;store_url&quot;:&quot;tcp://192.168.0.223:31080&quot;,&quot;world_size&quot;:2,&quot;storage_ranks&quot;:[0,1]},&quot;class_name&quot;:&quot;MemFabricL2Adapter&quot;,&quot;module_path&quot;:&quot;lmcache_ascend.v1.distributed.memfabric_l2_adapter&quot;,&quot;shared&quot;:true,&quot;type&quot;:&quot;plugin&quot;}&#x27;</code></pre></details><details><summary>vllm serve</summary><pre tabindex="0"><code>export TASK_QUEUE_ENABLE=1
+
+vllm serve /workspace/d00896497/models/GLM-5.1-W8A8C8-MTP \
+  --host 0.0.0.0 \
+  --port 28220 \
+  --data-parallel-size 1 \
+  --tensor-parallel-size 16 \
+  --enable-expert-parallel \
+  --pipeline-parallel-size 1 \
+  --distributed-executor-backend mp \
+  --hf-overrides &#x27;{&quot;use_index_cache&quot;: true, &quot;index_topk_freq&quot;: 4}&#x27; \
+  --speculative-config &#x27;{&quot;num_speculative_tokens&quot;: 3, &quot;method&quot;: &quot;deepseek_mtp&quot;, &quot;enforce_eager&quot;: true}&#x27; \
+  --seed 1024 \
+  --served-model-name glm-5 \
+  --max-model-len 20480 \
+  --additional-config &#x27;{&quot;fuse_muls_add&quot;: true, &quot;recompute_scheduler_enable&quot;: false, &quot;multistream_overlap_shared_expert&quot;: true, &quot;enable_dsa_cp&quot;: true, &quot;enable_sparse_sfa_c8&quot;: true, &quot;enable_sparse_li_c8&quot;: true, &quot;c8_enable_reshape_optim&quot;: true}&#x27; \
+  --max-num-batched-tokens 4096 \
+  --trust-remote-code \
+  --no-enable-prefix-caching \
+  --max-num-seqs 64 \
+  --quantization ascend \
+  --gpu-memory-utilization 0.96 \
+  --enforce-eager \
+  --enable-auto-tool-choice \
+  --tool-call-parser glm47 \
+  --reasoning-parser glm45 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;:&quot;LMCacheMPConnector&quot;,&quot;kv_role&quot;:&quot;kv_both&quot;,&quot;kv_connector_module_path&quot;:&quot;lmcache.integration.vllm.lmcache_mp_connector&quot;,&quot;kv_connector_extra_config&quot;:{&quot;lmcache.mp.host&quot;:&quot;tcp://127.0.0.1&quot;,&quot;lmcache.mp.port&quot;:25780,&quot;lmcache.mp.mp_transfer_mode&quot;:&quot;lmcache_driven&quot;}}&#x27;</code></pre></details></details><details><summary>25 号机 · 主测</summary><details><summary>公共环境变量 · 每个角色终端先执行</summary><pre tabindex="0"><code>export ACL_OP_INIT_MODE=1
+export ASCEND_A3_ENABLE=1
+export ASCEND_RT_VISIBLE_DEVICES=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
+export HCCL_BUFFSIZE=400
+export HCCL_OP_EXPANSION_MODE=AIV
+export HF_HUB_OFFLINE=1
+export OMP_NUM_THREADS=1
+export OMP_PROC_BIND=false
+export PATH=/workspace/d00896497/dual_l2_20261102_2310/runtime_no_mooncake/bin:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/bin:/usr/local/Ascend/ascend-toolkit/latest/bin:/usr/local/Ascend/ascend-toolkit/latest/compiler/ccec_compiler/bin:/usr/local/Ascend/ascend-toolkit/latest/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/show_kernel_debug_data:/usr/local/Ascend/cann-9.1.0/tools/msobjdump:/usr/local/Ascend/cann-9.1.0/bin:/usr/local/Ascend/cann-9.1.0/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/profiler/bin:/usr/local/Ascend/cann-9.1.0/tools/ascend_system_advisor/asys:/usr/local/python3.12.13/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PYTHONHASHSEED=0
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+export TOKENIZERS_PARALLELISM=false
+export TRANSFORMERS_OFFLINE=1
+export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
+export VLLM_ASCEND_ENABLE_FUSED_MC2=1
+export HOME=/workspace/d00896497/glm51_aggregate_20261106_m02/runtime-home
+export PYTHONNOUSERSITE=1
+export PYTHONDONTWRITEBYTECODE=1
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/l2_m25_20261104/src/LMCache
+export PYTHONPATH=/workspace/d00896497/l2_m25_20261104/sdk_selector:/workspace/d00896497/l2_m25_20261104/src/LMCache:/workspace/d00896497/multi_owner_dual_20261106_r01/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages
+export HCCL_IF_IP=192.168.0.122
+export GLOO_SOCKET_IFNAME=enp23s0f3
+export TP_SOCKET_IFNAME=enp23s0f3
+export HCCL_SOCKET_IFNAME=enp23s0f3
+export LD_LIBRARY_PATH=&quot;/workspace/d00896497/l2_m25_20261104/sdk_selector/memfabric_hybrid/lib:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/cann-9.1.0/lib64:$LD_LIBRARY_PATH&quot;
+unset ASCEND_ENABLE_USE_FABRIC_MEM VLLM_PP_LAYER_PARTITION</code></pre></details><details><summary>lmcache server</summary><pre tabindex="0"><code>export TASK_QUEUE_ENABLE=1
+
+lmcache server \
+  --host 127.0.0.1 \
+  --port 25780 \
+  --http-host 192.168.0.122 \
+  --http-port 44620 \
+  --prometheus-port 44621 \
+  --chunk-size 128 \
+  --l1-size-gb 32 \
+  --max-gpu-workers 16 \
+  --eviction-policy LRU \
+  --supported-transfer-mode lmcache_driven \
+  --l2-adapter &#x27;{&quot;adapter_params&quot;:{&quot;data_op_type&quot;:&quot;DEVICE_RDMA&quot;,&quot;device_id&quot;:1,&quot;device_nic&quot;:&quot;tcp://192.168.0.122:31082&quot;,&quot;enable_56bits_gva&quot;:true,&quot;join_coord_url&quot;:&quot;http://192.168.0.223:31081&quot;,&quot;join_group_id&quot;:&quot;glm51-aggregate-137-25-20261106-m02&quot;,&quot;pool_gb&quot;:8,&quot;rank_id&quot;:1,&quot;shared_directory&quot;:true,&quot;slot_size_mb&quot;:16,&quot;store_url&quot;:&quot;tcp://192.168.0.223:31080&quot;,&quot;world_size&quot;:2,&quot;storage_ranks&quot;:[0,1]},&quot;class_name&quot;:&quot;MemFabricL2Adapter&quot;,&quot;module_path&quot;:&quot;lmcache_ascend.v1.distributed.memfabric_l2_adapter&quot;,&quot;shared&quot;:true,&quot;type&quot;:&quot;plugin&quot;}&#x27;</code></pre></details><details><summary>vllm serve</summary><pre tabindex="0"><code>export TASK_QUEUE_ENABLE=0
+
+vllm serve /workspace/d00896497/models/GLM-5.1-W8A8C8-MTP \
+  --host 0.0.0.0 \
+  --port 28220 \
+  --data-parallel-size 1 \
+  --tensor-parallel-size 16 \
+  --enable-expert-parallel \
+  --pipeline-parallel-size 1 \
+  --distributed-executor-backend mp \
+  --hf-overrides &#x27;{&quot;use_index_cache&quot;: true, &quot;index_topk_freq&quot;: 4}&#x27; \
+  --speculative-config &#x27;{&quot;num_speculative_tokens&quot;: 3, &quot;method&quot;: &quot;deepseek_mtp&quot;, &quot;enforce_eager&quot;: true}&#x27; \
+  --seed 1024 \
+  --served-model-name glm-5 \
+  --max-model-len 20480 \
+  --additional-config &#x27;{&quot;fuse_muls_add&quot;: true, &quot;recompute_scheduler_enable&quot;: false, &quot;multistream_overlap_shared_expert&quot;: true, &quot;enable_dsa_cp&quot;: true, &quot;enable_sparse_sfa_c8&quot;: true, &quot;enable_sparse_li_c8&quot;: true, &quot;c8_enable_reshape_optim&quot;: true}&#x27; \
+  --max-num-batched-tokens 4096 \
+  --trust-remote-code \
+  --no-enable-prefix-caching \
+  --max-num-seqs 64 \
+  --quantization ascend \
+  --gpu-memory-utilization 0.96 \
+  --enforce-eager \
+  --enable-auto-tool-choice \
+  --tool-call-parser glm47 \
+  --reasoning-parser glm45 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;:&quot;LMCacheMPConnector&quot;,&quot;kv_role&quot;:&quot;kv_both&quot;,&quot;kv_connector_module_path&quot;:&quot;lmcache.integration.vllm.lmcache_mp_connector&quot;,&quot;kv_connector_extra_config&quot;:{&quot;lmcache.mp.host&quot;:&quot;tcp://127.0.0.1&quot;,&quot;lmcache.mp.port&quot;:25780,&quot;lmcache.mp.mp_transfer_mode&quot;:&quot;lmcache_driven&quot;}}&#x27;</code></pre></details></details><details><summary>25 号机 · 补测</summary><details><summary>公共环境变量 · 每个角色终端先执行</summary><pre tabindex="0"><code>export ACL_OP_INIT_MODE=1
+export ASCEND_A3_ENABLE=1
+export ASCEND_RT_VISIBLE_DEVICES=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
+export HCCL_BUFFSIZE=400
+export HCCL_OP_EXPANSION_MODE=AIV
+export HF_HUB_OFFLINE=1
+export OMP_NUM_THREADS=1
+export OMP_PROC_BIND=false
+export PATH=/workspace/d00896497/dual_l2_20261102_2310/runtime_no_mooncake/bin:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/bin:/usr/local/Ascend/ascend-toolkit/latest/bin:/usr/local/Ascend/ascend-toolkit/latest/compiler/ccec_compiler/bin:/usr/local/Ascend/ascend-toolkit/latest/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/show_kernel_debug_data:/usr/local/Ascend/cann-9.1.0/tools/msobjdump:/usr/local/Ascend/cann-9.1.0/bin:/usr/local/Ascend/cann-9.1.0/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/profiler/bin:/usr/local/Ascend/cann-9.1.0/tools/ascend_system_advisor/asys:/usr/local/python3.12.13/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PYTHONHASHSEED=0
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+export TOKENIZERS_PARALLELISM=false
+export TRANSFORMERS_OFFLINE=1
+export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
+export VLLM_ASCEND_ENABLE_FUSED_MC2=1
+export HOME=/workspace/d00896497/glm51_aggregate_20261106_m03/runtime-home
+export PYTHONNOUSERSITE=1
+export PYTHONDONTWRITEBYTECODE=1
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/l2_m25_20261104/src/LMCache
+export PYTHONPATH=/workspace/d00896497/l2_m25_20261104/sdk_selector:/workspace/d00896497/l2_m25_20261104/src/LMCache:/workspace/d00896497/multi_owner_dual_20261106_r01/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages
+export HCCL_IF_IP=192.168.0.122
+export GLOO_SOCKET_IFNAME=enp23s0f3
+export TP_SOCKET_IFNAME=enp23s0f3
+export HCCL_SOCKET_IFNAME=enp23s0f3
+export LD_LIBRARY_PATH=&quot;/workspace/d00896497/l2_m25_20261104/sdk_selector/memfabric_hybrid/lib:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/cann-9.1.0/lib64:$LD_LIBRARY_PATH&quot;
+unset ASCEND_ENABLE_USE_FABRIC_MEM VLLM_PP_LAYER_PARTITION</code></pre></details><details><summary>lmcache server</summary><pre tabindex="0"><code>export TASK_QUEUE_ENABLE=1
+
+lmcache server \
+  --host 127.0.0.1 \
+  --port 25780 \
+  --http-host 192.168.0.122 \
+  --http-port 44620 \
+  --prometheus-port 44621 \
+  --chunk-size 128 \
+  --l1-size-gb 32 \
+  --max-gpu-workers 16 \
+  --eviction-policy LRU \
+  --supported-transfer-mode lmcache_driven \
+  --l2-adapter &#x27;{&quot;adapter_params&quot;:{&quot;data_op_type&quot;:&quot;DEVICE_RDMA&quot;,&quot;device_id&quot;:1,&quot;device_nic&quot;:&quot;tcp://192.168.0.122:31082&quot;,&quot;enable_56bits_gva&quot;:true,&quot;join_coord_url&quot;:&quot;http://192.168.0.223:31081&quot;,&quot;join_group_id&quot;:&quot;glm51-aggregate-137-25-20261106-m03&quot;,&quot;pool_gb&quot;:8,&quot;rank_id&quot;:1,&quot;shared_directory&quot;:true,&quot;slot_size_mb&quot;:16,&quot;store_url&quot;:&quot;tcp://192.168.0.223:31080&quot;,&quot;world_size&quot;:2,&quot;storage_ranks&quot;:[0,1]},&quot;class_name&quot;:&quot;MemFabricL2Adapter&quot;,&quot;module_path&quot;:&quot;lmcache_ascend.v1.distributed.memfabric_l2_adapter&quot;,&quot;shared&quot;:true,&quot;type&quot;:&quot;plugin&quot;}&#x27;</code></pre></details><details><summary>vllm serve</summary><pre tabindex="0"><code>export TASK_QUEUE_ENABLE=0
+
+vllm serve /workspace/d00896497/models/GLM-5.1-W8A8C8-MTP \
+  --host 0.0.0.0 \
+  --port 28220 \
+  --data-parallel-size 1 \
+  --tensor-parallel-size 16 \
+  --enable-expert-parallel \
+  --pipeline-parallel-size 1 \
+  --distributed-executor-backend mp \
+  --hf-overrides &#x27;{&quot;use_index_cache&quot;: true, &quot;index_topk_freq&quot;: 4}&#x27; \
+  --speculative-config &#x27;{&quot;num_speculative_tokens&quot;: 3, &quot;method&quot;: &quot;deepseek_mtp&quot;, &quot;enforce_eager&quot;: true}&#x27; \
+  --seed 1024 \
+  --served-model-name glm-5 \
+  --max-model-len 20480 \
+  --additional-config &#x27;{&quot;fuse_muls_add&quot;: true, &quot;recompute_scheduler_enable&quot;: false, &quot;multistream_overlap_shared_expert&quot;: true, &quot;enable_dsa_cp&quot;: true, &quot;enable_sparse_sfa_c8&quot;: true, &quot;enable_sparse_li_c8&quot;: true, &quot;c8_enable_reshape_optim&quot;: true}&#x27; \
+  --max-num-batched-tokens 4096 \
+  --trust-remote-code \
+  --no-enable-prefix-caching \
+  --max-num-seqs 64 \
+  --quantization ascend \
+  --gpu-memory-utilization 0.96 \
+  --enforce-eager \
+  --enable-auto-tool-choice \
+  --tool-call-parser glm47 \
+  --reasoning-parser glm45 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;:&quot;LMCacheMPConnector&quot;,&quot;kv_role&quot;:&quot;kv_both&quot;,&quot;kv_connector_module_path&quot;:&quot;lmcache.integration.vllm.lmcache_mp_connector&quot;,&quot;kv_connector_extra_config&quot;:{&quot;lmcache.mp.host&quot;:&quot;tcp://127.0.0.1&quot;,&quot;lmcache.mp.port&quot;:25780,&quot;lmcache.mp.mp_transfer_mode&quot;:&quot;lmcache_driven&quot;}}&#x27;</code></pre></details></details></div></details>
+<details><summary>Mooncake TE · 原生启动命令与环境变量</summary><div class="startup-originals"><details><summary>137 号机</summary><details><summary>mooncake_master · 环境变量与命令</summary><pre tabindex="0"><code>export HCCL_INTRA_ROCE_ENABLE=1
+export MC_USE_TENT=0
+export LD_LIBRARY_PATH=&quot;/workspace/d00896497/glm51_memfabric_perf_20261106/store_assets/perf_store_direct_runtime/lib:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/aarch64-linux/lib64:$LD_LIBRARY_PATH&quot;
+
+/workspace/d00896497/glm51_memfabric_perf_20261106/store_assets/perf_store_direct_runtime/bin/mooncake_master \
+  --rpc_address=192.168.0.223 \
+  --rpc_port=31400 \
+  --rpc_thread_num=2 \
+  --memory_allocator=offset \
+  --enable_http_metadata_server=true \
+  --http_metadata_server_host=192.168.0.223 \
+  --http_metadata_server_port=31401 \
+  --metrics_port=31402</code></pre></details><details><summary>mooncake_client · 环境变量与命令</summary><pre tabindex="0"><code>export HCCL_INTRA_ROCE_ENABLE=1
+export MC_USE_TENT=0
+export ASCEND_RT_VISIBLE_DEVICES=1
+export ASCEND_VISIBLE_DEVICES=1
+export LD_LIBRARY_PATH=&quot;/workspace/d00896497/glm51_memfabric_perf_20261106/store_assets/perf_store_direct_runtime/lib:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/aarch64-linux/lib64:$LD_LIBRARY_PATH&quot;
+
+/workspace/d00896497/glm51_memfabric_perf_20261106/store_assets/perf_store_direct_runtime/bin/mooncake_client \
+  --host=192.168.0.223:31403 \
+  --metadata_server=http://192.168.0.223:31401/metadata \
+  --master_server_address=192.168.0.223:31400 \
+  --protocol=ascend \
+  --global_segment_size=8589934592 \
+  --local_buffer_size=67108864 \
+  --port=31404 \
+  --threads=1</code></pre></details><details><summary>lmcache server · 环境变量与命令</summary><pre tabindex="0"><code>export HCCL_INTRA_ROCE_ENABLE=1
+export MC_USE_TENT=0
+export ACL_OP_INIT_MODE=1
+export ASCEND_A3_ENABLE=1
+export ASCEND_RT_VISIBLE_DEVICES=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
+export HCCL_BUFFSIZE=400
+export HCCL_OP_EXPANSION_MODE=AIV
+export HF_HUB_OFFLINE=1
+export OMP_NUM_THREADS=1
+export OMP_PROC_BIND=false
+export PATH=/workspace/d00896497/l2_service_20261102_1930/runtime_no_mooncake/bin:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/bin:/usr/local/Ascend/ascend-toolkit/latest/bin:/usr/local/Ascend/ascend-toolkit/latest/compiler/ccec_compiler/bin:/usr/local/Ascend/ascend-toolkit/latest/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/show_kernel_debug_data:/usr/local/Ascend/cann-9.1.0/tools/msobjdump:/usr/local/Ascend/cann-9.1.0/bin:/usr/local/Ascend/cann-9.1.0/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/profiler/bin:/usr/local/Ascend/cann-9.1.0/tools/ascend_system_advisor/asys:/usr/local/python3.12.13/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PYTHONHASHSEED=0
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+export TASK_QUEUE_ENABLE=1
+export TOKENIZERS_PARALLELISM=false
+export TRANSFORMERS_OFFLINE=1
+export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
+export VLLM_ASCEND_ENABLE_FUSED_MC2=1
+export HCCL_IF_IP=192.168.0.223
+export HCCL_SOCKET_IFNAME=enp23s0f3
+export GLOO_SOCKET_IFNAME=enp23s0f3
+export TP_SOCKET_IFNAME=enp23s0f3
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/glm51_shared_ddr_20261103/src/LMCache
+export PYTHONNOUSERSITE=1
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONPATH=/workspace/d00896497/glm51_memfabric_perf_20261106/store_assets/perf_store_direct_runtime/overlay:/workspace/d00896497/glm51_mooncake_aggregate_20261106_s12:/workspace/d00896497/glm51_shared_ddr_20261103/src/LMCache:/workspace/d00896497/multi_owner_dual_20261106_r01/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages
+export HOME=/workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/runtime-home
+export STORE_DIRECT_RUNTIME_ROOT=/workspace/d00896497/glm51_memfabric_perf_20261106/store_assets/perf_store_direct_runtime
+export LD_LIBRARY_PATH=&quot;/workspace/d00896497/glm51_memfabric_perf_20261106/store_assets/perf_store_direct_runtime/lib:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/aarch64-linux/lib64:$LD_LIBRARY_PATH&quot;
+
+lmcache server \
+  --host 127.0.0.1 \
+  --port 25780 \
+  --http-host 192.168.0.223 \
+  --http-port 44620 \
+  --prometheus-port 44621 \
+  --chunk-size 128 \
+  --l1-size-gb 32 \
+  --max-gpu-workers 16 \
+  --eviction-policy LRU \
+  --supported-transfer-mode lmcache_driven \
+  --l2-adapter &#x27;{&quot;type&quot;:&quot;plugin&quot;,&quot;module_path&quot;:&quot;StoreDirectCandidate&quot;,&quot;class_name&quot;:&quot;CandidateDirectStoreL2Adapter&quot;,&quot;shared&quot;:true,&quot;adapter_params&quot;:{&quot;device_id&quot;:1,&quot;global_segment_size&quot;:&quot;0&quot;,&quot;local_buffer_size&quot;:&quot;0&quot;,&quot;master_server_addr&quot;:&quot;192.168.0.223:31400&quot;,&quot;max_capacity_gb&quot;:64,&quot;metadata_server&quot;:&quot;http://192.168.0.223:31401/metadata&quot;,&quot;num_workers&quot;:1,&quot;protocol&quot;:&quot;ascend&quot;,&quot;local_hostname&quot;:&quot;192.168.0.223&quot;}}&#x27;</code></pre></details><details><summary>vllm serve · 环境变量与命令</summary><pre tabindex="0"><code>export HCCL_INTRA_ROCE_ENABLE=1
+export MC_USE_TENT=0
+export ACL_OP_INIT_MODE=1
+export ASCEND_A3_ENABLE=1
+export ASCEND_RT_VISIBLE_DEVICES=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
+export HCCL_BUFFSIZE=400
+export HCCL_OP_EXPANSION_MODE=AIV
+export HF_HUB_OFFLINE=1
+export OMP_NUM_THREADS=1
+export OMP_PROC_BIND=false
+export PATH=/workspace/d00896497/l2_service_20261102_1930/runtime_no_mooncake/bin:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/bin:/usr/local/Ascend/ascend-toolkit/latest/bin:/usr/local/Ascend/ascend-toolkit/latest/compiler/ccec_compiler/bin:/usr/local/Ascend/ascend-toolkit/latest/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/show_kernel_debug_data:/usr/local/Ascend/cann-9.1.0/tools/msobjdump:/usr/local/Ascend/cann-9.1.0/bin:/usr/local/Ascend/cann-9.1.0/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/profiler/bin:/usr/local/Ascend/cann-9.1.0/tools/ascend_system_advisor/asys:/usr/local/python3.12.13/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PYTHONHASHSEED=0
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+export TASK_QUEUE_ENABLE=1
+export TOKENIZERS_PARALLELISM=false
+export TRANSFORMERS_OFFLINE=1
+export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
+export VLLM_ASCEND_ENABLE_FUSED_MC2=1
+export HCCL_IF_IP=192.168.0.223
+export HCCL_SOCKET_IFNAME=enp23s0f3
+export GLOO_SOCKET_IFNAME=enp23s0f3
+export TP_SOCKET_IFNAME=enp23s0f3
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/glm51_shared_ddr_20261103/src/LMCache
+export PYTHONNOUSERSITE=1
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONPATH=/workspace/d00896497/glm51_shared_ddr_20261103/src/LMCache:/workspace/d00896497/multi_owner_dual_20261106_r01/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages
+export HOME=/workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/runtime-home
+export LD_LIBRARY_PATH=&quot;/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/aarch64-linux/lib64:$LD_LIBRARY_PATH&quot;
+
+vllm serve /workspace/d00896497/models/GLM-5.1-W8A8C8-MTP \
+  --host 0.0.0.0 \
+  --port 28220 \
+  --data-parallel-size 1 \
+  --tensor-parallel-size 16 \
+  --enable-expert-parallel \
+  --pipeline-parallel-size 1 \
+  --distributed-executor-backend mp \
+  --hf-overrides &#x27;{&quot;use_index_cache&quot;: true, &quot;index_topk_freq&quot;: 4}&#x27; \
+  --speculative-config &#x27;{&quot;num_speculative_tokens&quot;: 3, &quot;method&quot;: &quot;deepseek_mtp&quot;, &quot;enforce_eager&quot;: true}&#x27; \
+  --seed 1024 \
+  --served-model-name glm-5 \
+  --max-model-len 20480 \
+  --additional-config &#x27;{&quot;fuse_muls_add&quot;: true, &quot;recompute_scheduler_enable&quot;: false, &quot;multistream_overlap_shared_expert&quot;: true, &quot;enable_dsa_cp&quot;: true, &quot;enable_sparse_sfa_c8&quot;: true, &quot;enable_sparse_li_c8&quot;: true, &quot;c8_enable_reshape_optim&quot;: true}&#x27; \
+  --max-num-batched-tokens 4096 \
+  --trust-remote-code \
+  --no-enable-prefix-caching \
+  --max-num-seqs 64 \
+  --quantization ascend \
+  --gpu-memory-utilization 0.96 \
+  --enforce-eager \
+  --enable-auto-tool-choice \
+  --tool-call-parser glm47 \
+  --reasoning-parser glm45 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;:&quot;LMCacheMPConnector&quot;,&quot;kv_role&quot;:&quot;kv_both&quot;,&quot;kv_connector_module_path&quot;:&quot;lmcache.integration.vllm.lmcache_mp_connector&quot;,&quot;kv_connector_extra_config&quot;:{&quot;lmcache.mp.host&quot;:&quot;tcp://127.0.0.1&quot;,&quot;lmcache.mp.port&quot;:25780,&quot;lmcache.mp.mp_transfer_mode&quot;:&quot;lmcache_driven&quot;}}&#x27;</code></pre></details></details><details><summary>25 号机</summary><details><summary>mooncake_client · 环境变量与命令</summary><pre tabindex="0"><code>export HCCL_INTRA_ROCE_ENABLE=1
+export MC_USE_TENT=0
+export ASCEND_RT_VISIBLE_DEVICES=1
+export ASCEND_VISIBLE_DEVICES=1
+export LD_LIBRARY_PATH=&quot;/workspace/d00896497/dual_l2_20261102_2310/perf_store_direct_runtime/lib:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/aarch64-linux/lib64:$LD_LIBRARY_PATH&quot;
+
+/workspace/d00896497/dual_l2_20261102_2310/perf_store_direct_runtime/bin/mooncake_client \
+  --host=192.168.0.122:31403 \
+  --metadata_server=http://192.168.0.223:31401/metadata \
+  --master_server_address=192.168.0.223:31400 \
+  --protocol=ascend \
+  --global_segment_size=8589934592 \
+  --local_buffer_size=67108864 \
+  --port=31404 \
+  --threads=1</code></pre></details><details><summary>lmcache server · 环境变量与命令</summary><pre tabindex="0"><code>export HCCL_INTRA_ROCE_ENABLE=1
+export MC_USE_TENT=0
+export ACL_OP_INIT_MODE=1
+export ASCEND_A3_ENABLE=1
+export ASCEND_RT_VISIBLE_DEVICES=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
+export HCCL_BUFFSIZE=400
+export HCCL_OP_EXPANSION_MODE=AIV
+export HF_HUB_OFFLINE=1
+export OMP_NUM_THREADS=1
+export OMP_PROC_BIND=false
+export PATH=/workspace/d00896497/dual_l2_20261102_2310/runtime_no_mooncake/bin:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/bin:/usr/local/Ascend/ascend-toolkit/latest/bin:/usr/local/Ascend/ascend-toolkit/latest/compiler/ccec_compiler/bin:/usr/local/Ascend/ascend-toolkit/latest/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/show_kernel_debug_data:/usr/local/Ascend/cann-9.1.0/tools/msobjdump:/usr/local/Ascend/cann-9.1.0/bin:/usr/local/Ascend/cann-9.1.0/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/profiler/bin:/usr/local/Ascend/cann-9.1.0/tools/ascend_system_advisor/asys:/usr/local/python3.12.13/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PYTHONHASHSEED=0
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+export TASK_QUEUE_ENABLE=1
+export TOKENIZERS_PARALLELISM=false
+export TRANSFORMERS_OFFLINE=1
+export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
+export VLLM_ASCEND_ENABLE_FUSED_MC2=1
+export HCCL_IF_IP=192.168.0.122
+export HCCL_SOCKET_IFNAME=enp23s0f3
+export GLOO_SOCKET_IFNAME=enp23s0f3
+export TP_SOCKET_IFNAME=enp23s0f3
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/l2_m25_20261104/src/LMCache
+export PYTHONNOUSERSITE=1
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/perf_store_direct_runtime/overlay:/workspace/d00896497/glm51_mooncake_aggregate_20261106_s12:/workspace/d00896497/l2_m25_20261104/src/LMCache:/workspace/d00896497/multi_owner_dual_20261106_r01/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages
+export HOME=/workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/runtime-home
+export STORE_DIRECT_RUNTIME_ROOT=/workspace/d00896497/dual_l2_20261102_2310/perf_store_direct_runtime
+export LD_LIBRARY_PATH=&quot;/workspace/d00896497/dual_l2_20261102_2310/perf_store_direct_runtime/lib:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/aarch64-linux/lib64:$LD_LIBRARY_PATH&quot;
+
+lmcache server \
+  --host 127.0.0.1 \
+  --port 25780 \
+  --http-host 192.168.0.122 \
+  --http-port 44620 \
+  --prometheus-port 44621 \
+  --chunk-size 128 \
+  --l1-size-gb 32 \
+  --max-gpu-workers 16 \
+  --eviction-policy LRU \
+  --supported-transfer-mode lmcache_driven \
+  --l2-adapter &#x27;{&quot;type&quot;:&quot;plugin&quot;,&quot;module_path&quot;:&quot;StoreDirectCandidate&quot;,&quot;class_name&quot;:&quot;CandidateDirectStoreL2Adapter&quot;,&quot;shared&quot;:true,&quot;adapter_params&quot;:{&quot;device_id&quot;:1,&quot;global_segment_size&quot;:&quot;0&quot;,&quot;local_buffer_size&quot;:&quot;0&quot;,&quot;master_server_addr&quot;:&quot;192.168.0.223:31400&quot;,&quot;max_capacity_gb&quot;:64,&quot;metadata_server&quot;:&quot;http://192.168.0.223:31401/metadata&quot;,&quot;num_workers&quot;:1,&quot;protocol&quot;:&quot;ascend&quot;,&quot;local_hostname&quot;:&quot;192.168.0.122&quot;}}&#x27;</code></pre></details><details><summary>vllm serve · 环境变量与命令</summary><pre tabindex="0"><code>export HCCL_INTRA_ROCE_ENABLE=1
+export MC_USE_TENT=0
+export ACL_OP_INIT_MODE=1
+export ASCEND_A3_ENABLE=1
+export ASCEND_RT_VISIBLE_DEVICES=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
+export HCCL_BUFFSIZE=400
+export HCCL_OP_EXPANSION_MODE=AIV
+export HF_HUB_OFFLINE=1
+export OMP_NUM_THREADS=1
+export OMP_PROC_BIND=false
+export PATH=/workspace/d00896497/dual_l2_20261102_2310/runtime_no_mooncake/bin:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/bin:/usr/local/Ascend/ascend-toolkit/latest/bin:/usr/local/Ascend/ascend-toolkit/latest/compiler/ccec_compiler/bin:/usr/local/Ascend/ascend-toolkit/latest/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/show_kernel_debug_data:/usr/local/Ascend/cann-9.1.0/tools/msobjdump:/usr/local/Ascend/cann-9.1.0/bin:/usr/local/Ascend/cann-9.1.0/tools/ccec_compiler/bin:/usr/local/Ascend/cann-9.1.0/tools/profiler/bin:/usr/local/Ascend/cann-9.1.0/tools/ascend_system_advisor/asys:/usr/local/python3.12.13/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PYTHONHASHSEED=0
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+export TASK_QUEUE_ENABLE=0
+export TOKENIZERS_PARALLELISM=false
+export TRANSFORMERS_OFFLINE=1
+export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
+export VLLM_ASCEND_ENABLE_FUSED_MC2=1
+export HCCL_IF_IP=192.168.0.122
+export HCCL_SOCKET_IFNAME=enp23s0f3
+export GLOO_SOCKET_IFNAME=enp23s0f3
+export TP_SOCKET_IFNAME=enp23s0f3
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/l2_m25_20261104/src/LMCache
+export PYTHONNOUSERSITE=1
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONPATH=/workspace/d00896497/l2_m25_20261104/src/LMCache:/workspace/d00896497/multi_owner_dual_20261106_r01/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages
+export HOME=/workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/runtime-home
+export LD_LIBRARY_PATH=&quot;/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/aarch64-linux/lib64:$LD_LIBRARY_PATH&quot;
+
+vllm serve /workspace/d00896497/models/GLM-5.1-W8A8C8-MTP \
+  --host 0.0.0.0 \
+  --port 28220 \
+  --data-parallel-size 1 \
+  --tensor-parallel-size 16 \
+  --enable-expert-parallel \
+  --pipeline-parallel-size 1 \
+  --distributed-executor-backend mp \
+  --hf-overrides &#x27;{&quot;use_index_cache&quot;: true, &quot;index_topk_freq&quot;: 4}&#x27; \
+  --speculative-config &#x27;{&quot;num_speculative_tokens&quot;: 3, &quot;method&quot;: &quot;deepseek_mtp&quot;, &quot;enforce_eager&quot;: true}&#x27; \
+  --seed 1024 \
+  --served-model-name glm-5 \
+  --max-model-len 20480 \
+  --additional-config &#x27;{&quot;fuse_muls_add&quot;: true, &quot;recompute_scheduler_enable&quot;: false, &quot;multistream_overlap_shared_expert&quot;: true, &quot;enable_dsa_cp&quot;: true, &quot;enable_sparse_sfa_c8&quot;: true, &quot;enable_sparse_li_c8&quot;: true, &quot;c8_enable_reshape_optim&quot;: true}&#x27; \
+  --max-num-batched-tokens 4096 \
+  --trust-remote-code \
+  --no-enable-prefix-caching \
+  --max-num-seqs 64 \
+  --quantization ascend \
+  --gpu-memory-utilization 0.96 \
+  --enforce-eager \
+  --enable-auto-tool-choice \
+  --tool-call-parser glm47 \
+  --reasoning-parser glm45 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;:&quot;LMCacheMPConnector&quot;,&quot;kv_role&quot;:&quot;kv_both&quot;,&quot;kv_connector_module_path&quot;:&quot;lmcache.integration.vllm.lmcache_mp_connector&quot;,&quot;kv_connector_extra_config&quot;:{&quot;lmcache.mp.host&quot;:&quot;tcp://127.0.0.1&quot;,&quot;lmcache.mp.port&quot;:25780,&quot;lmcache.mp.mp_transfer_mode&quot;:&quot;lmcache_driven&quot;}}&#x27;</code></pre></details></details></div></details>
+
+<h4>验证用例与计时</h4>
+<ul>
+<li><strong>容量和来源。</strong> MemFabric 写入 960 个不同合成对象，共 8,853,258,240 B，两端各留 480 个，25 全量读回且逐字节一致。Mooncake 核实两台各挂一个实际 8 GiB 段，并验证模型请求的对象放置与读回。</li>
+<li><strong>GLM 精度回放。</strong> MemFabric 完成 26/26 题，逐题核实从两端读回，137 与 25 本轮答案 26/26 一致。NIAH 6/6，MMLU 18/20。与历史恢复答案 25/26 一致，物理第 4 题历史答 D，本轮两端及同服务强制重算均答 C。严格历史答案等价未通过，性能在明确保留该边界的条件下执行。</li>
+<li><strong>正式负载。</strong> 四组配对使用逐字节相同的请求文件，两个后端各成功完成 27 条。A 端预填、写池、确认对象留存、清理 B 的 L1 均在计时外。25 号机按 C1 或 C4 发请求，固定输出上限并忽略 EOS，成功须完整流式输出和有效 usage。吞吐以正式批次发送到最后请求终态的窗口计算。</li>
+</ul>
+
+</div>
+</section>
+<section id="appendix">
+<h2>附录　详细数据</h2>
+<h3 id="glm-case-data">A　GLM-5.1 逐用例实测</h3><h4 id="glm-ttft-tail">TTFT 特殊场景与长尾</h4>
+<ul>
+<li><strong>16K → 128 · C1，整组分开看。</strong> 每后端 3 条。MemFabric TTFT 均值 11.99 s，范围 8.57–18.31 s。Mooncake 均值 6.19 s，范围 4.79–6.92 s。两侧范围不重叠，因此完整保留该组用于长上下文比较。</li>
+<li><strong>4K → 128 · C1，Mooncake 有一条明显长尾。</strong> 最慢 TTFT 13.11 s，全组 8 条均值 4.00 s。仅用于看这条对均值的影响，另外 7 条的均值约 2.69 s。MemFabric 同组最大值 3.48 s。原始汇总缺少这条请求与对端的逐条配对时延，正文保留该请求。</li>
+<li>两组 4K 并发 4 的 TTFT 最大值，MemFabric 分别为 9.40、9.74 s，Mooncake 为 7.82、7.15 s。并发批次包含不同发送波次，单凭最大值无法判定是孤立异常。</li>
+</ul>
+<details><summary>展开含 16K 的四组整体均值</summary>
+<p>四组配对等权，每后端 27 条成功请求。</p>
+<div class="table"><table><thead><tr><th scope="col">指标</th><th scope="col">MemFabric 兼容 L2 + DEVICE_RDMA</th><th scope="col">Mooncake Store + 经典 TE（ascend）</th><th scope="col">MemFabric 相对 Mooncake</th></tr></thead><tbody><tr><th scope="row">首 token 延迟（TTFT，ms）</th><td>6787.06</td><td>5235.49</td><td><strong>慢 29.6%</strong></td></tr><tr><th scope="row">每输出 token 耗时（TPOT，ms/token）</th><td>150.40</td><td>153.96</td><td><strong>快 2.3%</strong></td></tr><tr><th scope="row">完整响应耗时（s）</th><td>39.492</td><td>40.133</td><td><strong>快 1.6%</strong></td></tr><tr><th scope="row">输出吞吐（token/s）</th><td>12.62</td><td>11.19</td><td><strong>增加 12.8%</strong></td></tr><tr><th scope="row">输入吞吐（token/s）</th><td>354.32</td><td>379.81</td><td><strong>下降 6.7%</strong></td></tr><tr><th scope="row">请求吞吐（req/s）</th><td>0.0634</td><td>0.0612</td><td><strong>增加 3.6%</strong></td></tr></tbody></table></div>
+</details>
+
+<p>每格按 MemFabric／Mooncake 顺序列值。时延为该组请求均值，百分比以 Mooncake 为基准。16K→128 每端仅 3 条，4K→512 并发 1 的 MemFabric 未在窗口内执行。</p>
+<div class="table"><table><thead><tr><th scope="col">输入 → 输出 · 并发</th><th scope="col">成功／发送</th><th scope="col">TTFT 均值（ms）</th><th scope="col">TPOT 均值（ms/token）</th><th scope="col">完整响应均值（s）</th><th scope="col">输出（token/s）</th><th scope="col">输入（token/s）</th><th scope="col">请求（req/s）</th></tr></thead><tbody><tr><th scope="row">4K → 128 · C1</th><td>8/8／8/8</td><td>3144.63／3996.20<br><small>快 21.3%</small></td><td>148.91／159.81<br><small>快 6.8%</small></td><td>22.056／24.292<br><small>快 9.2%</small></td><td>5.80／5.27<br><small>增加 10.1%</small></td><td>185.70／168.61<br><small>增加 10.1%</small></td><td>0.0453／0.0412<br><small>增加 10.1%</small></td></tr><tr><th scope="row">4K → 128 · C4</th><td>8/8／8/8</td><td>5887.77／5623.00<br><small>慢 4.7%</small></td><td>150.14／157.72<br><small>快 4.8%</small></td><td>24.955／25.653<br><small>快 2.7%</small></td><td>16.68／16.20<br><small>增加 3.0%</small></td><td>533.60／518.30<br><small>增加 3.0%</small></td><td>0.1303／0.1265<br><small>增加 3.0%</small></td></tr><tr><th scope="row">4K → 512 · C4</th><td>8/8／8/8</td><td>6126.13／5135.70<br><small>慢 19.3%</small></td><td>141.71／159.84<br><small>快 11.3%</small></td><td>78.538／86.811<br><small>快 9.5%</small></td><td>24.07／17.90<br><small>增加 34.5%</small></td><td>192.56／143.19<br><small>增加 34.5%</small></td><td>0.0470／0.0350<br><small>增加 34.5%</small></td></tr><tr><th scope="row">16K → 128 · C1</th><td>3/3／3/3</td><td>11989.73／6187.06<br><small>慢 93.8%</small></td><td>160.85／138.48<br><small>慢 16.2%</small></td><td>32.418／23.774<br><small>慢 36.4%</small></td><td>3.95／5.38<br><small>下降 26.7%</small></td><td>505.39／689.13<br><small>下降 26.7%</small></td><td>0.0308／0.0421<br><small>下降 26.7%</small></td></tr><tr><th scope="row">4K → 512 · C1</th><td>未执行／8/8</td><td>未执行／2644.08</td><td>未执行／150.43</td><td>未执行／79.513</td><td>未执行／6.44</td><td>未执行／51.51</td><td>未执行／0.0126</td></tr></tbody></table></div>
+<details><summary>展开实际 L2 读取核对</summary>
+<div class="table"><table><thead><tr><th scope="col">用例</th><th scope="col">读取对象数</th><th scope="col">MemFabric 137／25 读 B</th><th scope="col">Mooncake 总读 B</th></tr></thead><tbody><tr><th scope='row'>4,096 → 128 · C1</th><td>256</td><td>1,180,434,432／1,180,434,432</td><td>2,360,868,864</td></tr><tr><th scope='row'>4,096 → 128 · C4</th><td>256</td><td>1,180,434,432／1,180,434,432</td><td>2,360,868,864</td></tr><tr><th scope='row'>4,096 → 512 · C4</th><td>256</td><td>1,180,434,432／1,180,434,432</td><td>2,360,868,864</td></tr><tr><th scope='row'>16,384 → 128 · C1</th><td>384</td><td>1,770,651,648／1,770,651,648</td><td>3,541,303,296</td></tr><tr><th scope='row'>4,096 → 512 · C1</th><td>256</td><td>未执行</td><td>2,360,868,864</td></tr></tbody></table></div>
+<p>两条路径的配对批次读取总量相同，物理放置比例有差异。4K→128 的 C1／C4 两组，Mooncake 预填时分别在 137／25 放置 146／110 和 132／124 个对象，MemFabric 均为 128／128。</p>
+</details>
+<p>16K 的 Mooncake 首次取证因日志后缀解析失败，双方改用同一新请求命名空间完成配对。压测结束后两台设备已回读释放，Mooncake 两端 Store 在清理阶段强制退出。双实例均衡分发与恢复相对重算的性能对照尚未执行。</p>
+<details><summary>展开各组实际压测客户端命令</summary><div class="startup-originals"><details><summary>MemFabric · 4,096 → 128 · C1</summary><pre tabindex="0"><code>python3 /workspace/d00896497/glm51_aggregate_20261106_m01/perf/perf_client.py \
+  --data /workspace/d00896497/glm51_aggregate_20261106_m02/perf-r00-c1/requests.jsonl \
+  --round r00_in4096_out128 \
+  --batch-id r00_in4096_out128-c1 \
+  --execute \
+  --timeout 120 \
+  --start-unix 1793939722.9802282 \
+  --stop-new-unix 1793940120.0 \
+  --drain-unix 1793940360.0 \
+  --stop-file /workspace/d00896497/glm51_aggregate_20261106_m02/perf-r00-c1/STOP \
+  --output /workspace/d00896497/glm51_aggregate_20261106_m02/perf-r00-c1/formal \
+  --prepare-receipt /workspace/d00896497/glm51_aggregate_20261106_m02/perf-r00-c1/prepare/ready_for_b.json \
+  --routing b_single \
+  --urls http://192.168.0.122:28220/v1 \
+  --concurrency 1</code></pre></details><details><summary>Mooncake · 4,096 → 128 · C1</summary><pre tabindex="0"><code>python3 /workspace/d00896497/glm51_mooncake_aggregate_20261106_s09/client/perf_client.py \
+  --data /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/perf-r00-c1/requests.jsonl \
+  --round r00_in4096_out128 \
+  --batch-id r00_in4096_out128-c1 \
+  --backend store \
+  --store-ready /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/perf-r00-c1/prepare/ready_store.json \
+  --output /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/perf-r00-c1/formal \
+  --routing b_single \
+  --urls http://192.168.0.122:28220/v1 \
+  --concurrency 1 \
+  --execute \
+  --start-unix 1793941525.0319276 \
+  --stop-new-unix 1793942554.0319276 \
+  --drain-unix 1793942674.0319276 \
+  --timeout 120 \
+  --stop-file /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/perf-r00-c1/STOP</code></pre></details><details><summary>MemFabric · 4,096 → 128 · C4</summary><pre tabindex="0"><code>python3 /workspace/d00896497/glm51_aggregate_20261106_m01/perf/perf_client.py \
+  --data /workspace/d00896497/glm51_aggregate_20261106_m02/perf-r00-c4-r02/requests.jsonl \
+  --round r00_in4096_out128 \
+  --batch-id r00_in4096_out128-c4 \
+  --execute \
+  --timeout 120 \
+  --start-unix 1793939946.1367626 \
+  --stop-new-unix 1793940600.0 \
+  --drain-unix 1793940780.0 \
+  --stop-file /workspace/d00896497/glm51_aggregate_20261106_m02/perf-r00-c4-r02/STOP \
+  --output /workspace/d00896497/glm51_aggregate_20261106_m02/perf-r00-c4-r02/formal \
+  --prepare-receipt /workspace/d00896497/glm51_aggregate_20261106_m02/perf-r00-c4-r02/prepare/ready_for_b.json \
+  --routing b_single \
+  --urls http://192.168.0.122:28220/v1 \
+  --concurrency 4</code></pre></details><details><summary>Mooncake · 4,096 → 128 · C4</summary><pre tabindex="0"><code>python3 /workspace/d00896497/glm51_mooncake_aggregate_20261106_s09/client/perf_client.py \
+  --data /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/perf-r00-c4/requests.jsonl \
+  --round r00_in4096_out128 \
+  --batch-id r00_in4096_out128-c4 \
+  --backend store \
+  --store-ready /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/perf-r00-c4/prepare/ready_store.json \
+  --output /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/perf-r00-c4/formal \
+  --routing b_single \
+  --urls http://192.168.0.122:28220/v1 \
+  --concurrency 4 \
+  --execute \
+  --start-unix 1793941728.0843785 \
+  --stop-new-unix 1793942757.0843785 \
+  --drain-unix 1793942877.0843785 \
+  --timeout 120 \
+  --stop-file /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/perf-r00-c4/STOP</code></pre></details><details><summary>MemFabric · 4,096 → 512 · C4</summary><pre tabindex="0"><code>python3 /workspace/d00896497/glm51_aggregate_20261106_m01/perf/perf_client.py \
+  --data /workspace/d00896497/glm51_aggregate_20261106_m03/perf-r01_in4096_out512-c4/requests.jsonl \
+  --round r01_in4096_out512 \
+  --batch-id r01_in4096_out512-c4 \
+  --execute \
+  --timeout 120 \
+  --start-unix 1793943497.048991 \
+  --stop-new-unix 1793944080.0 \
+  --drain-unix 1793944380.0 \
+  --stop-file /workspace/d00896497/glm51_aggregate_20261106_m03/perf-r01_in4096_out512-c4/STOP \
+  --output /workspace/d00896497/glm51_aggregate_20261106_m03/perf-r01_in4096_out512-c4/formal \
+  --prepare-receipt /workspace/d00896497/glm51_aggregate_20261106_m03/perf-r01_in4096_out512-c4/prepare/ready_for_b.json \
+  --routing b_single \
+  --urls http://192.168.0.122:28220/v1 \
+  --concurrency 4</code></pre></details><details><summary>Mooncake · 4,096 → 512 · C4</summary><pre tabindex="0"><code>python3 /workspace/d00896497/glm51_mooncake_aggregate_20261106_s09/client/perf_client.py \
+  --data /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/perf-r01_in4096_out512-c4/requests.jsonl \
+  --round r01_in4096_out512 \
+  --batch-id r01_in4096_out512-c4 \
+  --backend store \
+  --store-ready /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/perf-r01_in4096_out512-c4/prepare/ready_store.json \
+  --output /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/perf-r01_in4096_out512-c4/formal \
+  --routing b_single \
+  --urls http://192.168.0.122:28220/v1 \
+  --concurrency 4 \
+  --execute \
+  --start-unix 1793941870.558705 \
+  --stop-new-unix 1793942899.558705 \
+  --drain-unix 1793943019.558705 \
+  --timeout 120 \
+  --stop-file /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/perf-r01_in4096_out512-c4/STOP</code></pre></details><details><summary>MemFabric · 16,384 → 128 · C1</summary><pre tabindex="0"><code>python3 /workspace/d00896497/glm51_aggregate_20261106_m01/perf/perf_client.py \
+  --data /workspace/d00896497/glm51_aggregate_20261106_m03/perf-r02_in16384_out128-c1/requests.jsonl \
+  --round r02_in16384_out128 \
+  --batch-id r02_in16384_out128-c1 \
+  --execute \
+  --timeout 120 \
+  --start-unix 1793943392.2292757 \
+  --stop-new-unix 1793944080.0 \
+  --drain-unix 1793944380.0 \
+  --stop-file /workspace/d00896497/glm51_aggregate_20261106_m03/perf-r02_in16384_out128-c1/STOP \
+  --output /workspace/d00896497/glm51_aggregate_20261106_m03/perf-r02_in16384_out128-c1/formal \
+  --prepare-receipt /workspace/d00896497/glm51_aggregate_20261106_m03/perf-r02_in16384_out128-c1/prepare/ready_for_b.json \
+  --routing b_single \
+  --urls http://192.168.0.122:28220/v1 \
+  --concurrency 1</code></pre></details><details><summary>Mooncake · 16,384 → 128 · C1</summary><pre tabindex="0"><code>python3 /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/client-retry/perf_client.py \
+  --data /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/perf-r02_in16384_out128-c1-r02/requests.jsonl \
+  --round r02_in16384_out128 \
+  --batch-id r02_in16384_out128-c1-r02 \
+  --backend store \
+  --store-ready /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/perf-r02_in16384_out128-c1-r02/prepare/ready_store.json \
+  --output /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/perf-r02_in16384_out128-c1-r02/formal \
+  --routing b_single \
+  --urls http://192.168.0.122:28220/v1 \
+  --concurrency 1 \
+  --execute \
+  --start-unix 1793942756.2036943 \
+  --stop-new-unix 1793943785.2036943 \
+  --drain-unix 1793943905.2036943 \
+  --timeout 120 \
+  --stop-file /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/perf-r02_in16384_out128-c1-r02/STOP</code></pre></details><details><summary>Mooncake · 4,096 → 512 · C1</summary><pre tabindex="0"><code>python3 /workspace/d00896497/glm51_mooncake_aggregate_20261106_s09/client/perf_client.py \
+  --data /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/perf-r01_in4096_out512-c1/requests.jsonl \
+  --round r01_in4096_out512 \
+  --batch-id r01_in4096_out512-c1 \
+  --backend store \
+  --store-ready /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/perf-r01_in4096_out512-c1/prepare/ready_store.json \
+  --output /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/perf-r01_in4096_out512-c1/formal \
+  --routing b_single \
+  --urls http://192.168.0.122:28220/v1 \
+  --concurrency 1 \
+  --execute \
+  --start-unix 1793942108.2608883 \
+  --stop-new-unix 1793943137.2608883 \
+  --drain-unix 1793943257.2608883 \
+  --timeout 120 \
+  --stop-file /workspace/d00896497/glm51_mooncake_aggregate_20261106_s12/perf-r01_in4096_out512-c1/STOP</code></pre></details></div></details>
+
+<p class="source"><a href="../../routes/l2/runs/20261106_137_25_perf/glm_aggregate_m02_memfabric_r00_originals.tar.gz">MemFabric 主测</a> · <a href="../../routes/l2/runs/20261106_137_25_perf/mooncake_s12_r00_originals.tar.gz">Mooncake 主测</a> · <a href="../../routes/l2/runs/20261106_137_25_perf/glm_aggregate_m03_memfabric_optional_originals.tar.gz">MemFabric 补测</a> · <a href="../../routes/l2/runs/20261106_137_25_perf/mooncake_s12_optional_originals.tar.gz">Mooncake 补测</a> · <a href="../../routes/l2/runs/20261106_137_25_perf/glm_aggregate_m02_accuracy_originals.tar.gz">26 题精度原件</a> · <a href="../../CURRENT_STATE.md">容量、启动与释放回执</a></p>
+<h3>B　历史实测 · Qwen3-8B 服务对照</h3>
+<p>2026-11-03 的 L2 热态对照。每个后端跑两轮，每轮 10 条。按 Mooncake、MemFabric、MemFabric、Mooncake 的顺序交替执行。下表每格的两个数字是该后端两轮各自的统计值。</p>
+<div class="table"><table><thead><tr><th scope="col">请求与指标</th><th scope="col">MemFabric DEVICE_RDMA</th><th scope="col">Mooncake Store／Ascend Direct TE</th></tr></thead><tbody>
+<tr><th scope="row">短输出 · 完整响应均值（ms）</th><td>351.799／382.460</td><td>376.963／398.705</td></tr>
+<tr><th scope="row">短输出 · Decode 端 TTFT 均值（ms）</th><td>124.390／133.203</td><td>133.364／140.816</td></tr>
+<tr><th scope="row">短输出 · Decode 端 L2 预取均值（ms）</th><td>14.140／13.840</td><td>15.520／15.440</td></tr>
+<tr><th scope="row">128-token 输出 · 完整响应均值（ms）</th><td>6009.522／7142.830</td><td>5937.604／6185.349</td></tr>
+<tr><th scope="row">128-token 输出 · Decode 端 L2 预取均值（ms）</th><td>14.500／14.520</td><td>15.650／15.610</td></tr>
+<tr><th scope="row">128-token 输出 · Decode 端 TPOT 均值（ms/token）</th><td>45.486／54.268</td><td>44.934／46.806</td></tr>
+</tbody></table></div>
+<p>完整响应均值从每条非流式代理响应计算。Decode 端 TTFT 和 TPOT 来自 vLLM worker 指标。Qwen3 的历史负载和部署配置与正文 GLM 对照分开统计。</p>
+<h4>这批数据对应的实跑启动参数</h4>
+<div class="table"><table><thead><tr><th scope="col">参数</th><th scope="col">MemFabric DEVICE_RDMA</th><th scope="col">Mooncake Store／Ascend Direct TE</th></tr></thead><tbody>
+<tr><th scope="row">模型与设备</th><td colspan="2">Qwen3-8B，BF16、eager，Prefill 和 Decode 各 TP1／DP1／PP1。两模型在 8 号机，物理卡 P=8、D=10，LMCache 可见 8／10／12。远端 1 GiB HOST DDR 池在 25 号机，设备 12。</td></tr>
+<tr><th scope="row">vLLM</th><td colspan="2"><code>--max-model-len 4096 --max-num-batched-tokens 1024 --max-num-seqs 1 --gpu-memory-utilization 0.70</code>。block size 128，APC 关闭，seed 1024，LMCacheMPConnector 使用 <code>kv_both</code>、<code>lmcache_driven</code>。</td></tr>
+<tr><th scope="row">L1 与 L2 参数</th><td>CPU L1 2 GiB，chunk 128。<code>DEVICE_RDMA</code>、56-bit GVA、32 MiB 池槽，<code>register_l1_arena=true</code>、<code>l1_registration_chunk_mb=32</code>。</td><td>CPU L1 2 GiB，chunk 128。<code>protocol=ascend</code>，Ascend Direct 开、TENT 关，RoCE 开、<code>use_fabric_mem=false</code>。本机插件使用 <code>num_workers=1</code> 并在首请求前注册稳定 L1 区域。</td></tr>
+<tr><th scope="row">环境与请求</th><td colspan="2">实际服务／P／D 日志级别为 1／3／3，<code>HCCL_INTRA_ROCE_ENABLE=1</code>，CPU 允许范围 96–119。并发 1、输入 1,373 token、温度 0。短组 <code>max_tokens=8</code>，实际输出 4；长组 <code>max_tokens=128</code>、<code>ignore_eos=true</code>，实际输出 128。</td></tr>
+<tr><th scope="row">每条请求的缓存条件</th><td colspan="2">预热后按请求核实 Decode 端 0 个 L1 命中、10 个 L2 对象。实际从远端读取 180 MiB，恢复 1,280 token、重算 93 token。</td></tr>
+</tbody></table></div>
+<p>两边使用相同的历史 LMCache 代码，core 带稳定 L1 注册范围字段。此处成绩归属于该 Qwen3 配置。双机 GLM 实测见本章前半部分。</p>
+<div id="qwen-startup">
+<p>在模型所在的实验容器内，LMCache、Prefill 和 Decode 各用一个终端。各折叠区保留该轮实际端口、设备、L2 插件参数和已记录的环境变量。两组启动前分别需要对应的远端 DDR 池就绪。</p>
+<p class="source">命令按历史实跑参数展开。历史服务入口另有 NPU 上下文初始化，两组的原生 CLI 形式尚未单独上机复验。</p>
+<details><summary>MemFabric DEVICE_RDMA · 原生启动命令与环境变量</summary><div class="startup-originals"><details><summary>短输出 · 第 1 轮</summary><h4>lmcache server</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/arena_tp1/runs/arena-on-tp1-r12/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=8,10,12
+export ASCEND_VISIBLE_DEVICES=8,10,12
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=1
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib:
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+export LMCACHE_LOG_LEVEL=DEBUG
+
+lmcache server \
+  --host 127.0.0.1 \
+  --port 27820 \
+  --http-host 127.0.0.1 \
+  --http-port 27821 \
+  --prometheus-port 27822 \
+  --chunk-size 128 \
+  --l1-size-gb 2 \
+  --max-gpu-workers 2 \
+  --eviction-policy LRU \
+  --supported-transfer-mode lmcache_driven \
+  --l2-store-policy skip_l1 \
+  --l2-prefetch-policy default \
+  --l2-adapter &#x27;{&quot;type&quot;: &quot;plugin&quot;, &quot;module_path&quot;: &quot;lmcache_ascend.v1.distributed.memfabric_l2_adapter&quot;, &quot;class_name&quot;: &quot;MemFabricL2Adapter&quot;, &quot;adapter_params&quot;: {&quot;device_id&quot;: 2, &quot;world_size&quot;: 2, &quot;pool_gb&quot;: 1, &quot;storage_rank&quot;: 1, &quot;slot_size_mb&quot;: 32, &quot;store_url&quot;: &quot;tcp://192.168.0.110:27810&quot;, &quot;data_op_type&quot;: &quot;DEVICE_RDMA&quot;, &quot;device_nic&quot;: &quot;tcp://192.168.0.110:27805&quot;, &quot;enable_56bits_gva&quot;: true, &quot;join_coord_url&quot;: &quot;http://192.168.0.110:27811&quot;, &quot;join_group_id&quot;: &quot;arena-on-tp1-r12&quot;, &quot;register_l1_arena&quot;: true, &quot;l1_registration_chunk_mb&quot;: 32}}&#x27;</code></pre><h4>vllm serve · Prefill</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/arena_tp1/runs/arena-on-tp1-r12/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=8
+export ASCEND_VISIBLE_DEVICES=8
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=3
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib:
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+export LMCACHE_REQUEST_TELEMETRY_TYPE=fastapi
+export LMCACHE_REQUEST_TELEMETRY_ENDPOINT=http://127.0.0.1:27827/api/v1/telemetry
+
+vllm serve /workspace/d00896497/models/Qwen3-8B \
+  --served-model-name mf-l2-gate \
+  --tensor-parallel-size 1 \
+  --dtype bfloat16 \
+  --seed 1024 \
+  --max-model-len 4096 \
+  --max-num-batched-tokens 1024 \
+  --max-num-seqs 1 \
+  --gpu-memory-utilization 0.7 \
+  --block-size 128 \
+  --no-enable-prefix-caching \
+  --enforce-eager \
+  --host 127.0.0.1 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;: &quot;LMCacheMPConnector&quot;, &quot;kv_role&quot;: &quot;kv_both&quot;, &quot;kv_connector_module_path&quot;: &quot;lmcache.integration.vllm.lmcache_mp_connector&quot;, &quot;kv_connector_extra_config&quot;: {&quot;lmcache.mp.host&quot;: &quot;tcp://127.0.0.1&quot;, &quot;lmcache.mp.port&quot;: 27820, &quot;lmcache.mp.mp_transfer_mode&quot;: &quot;lmcache_driven&quot;}}&#x27; \
+  --shutdown-timeout 30 \
+  --port 27823</code></pre><h4>vllm serve · Decode</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/arena_tp1/runs/arena-on-tp1-r12/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=10
+export ASCEND_VISIBLE_DEVICES=10
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=3
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib:
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+
+vllm serve /workspace/d00896497/models/Qwen3-8B \
+  --served-model-name mf-l2-gate \
+  --tensor-parallel-size 1 \
+  --dtype bfloat16 \
+  --seed 1024 \
+  --max-model-len 4096 \
+  --max-num-batched-tokens 1024 \
+  --max-num-seqs 1 \
+  --gpu-memory-utilization 0.7 \
+  --block-size 128 \
+  --no-enable-prefix-caching \
+  --enforce-eager \
+  --host 127.0.0.1 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;: &quot;LMCacheMPConnector&quot;, &quot;kv_role&quot;: &quot;kv_both&quot;, &quot;kv_connector_module_path&quot;: &quot;lmcache.integration.vllm.lmcache_mp_connector&quot;, &quot;kv_connector_extra_config&quot;: {&quot;lmcache.mp.host&quot;: &quot;tcp://127.0.0.1&quot;, &quot;lmcache.mp.port&quot;: 27820, &quot;lmcache.mp.mp_transfer_mode&quot;: &quot;lmcache_driven&quot;}}&#x27; \
+  --shutdown-timeout 30 \
+  --port 27824</code></pre></details><details><summary>短输出 · 第 2 轮</summary><h4>lmcache server</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/arena_tp1/runs/arena-on-tp1-r13/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=8,10,12
+export ASCEND_VISIBLE_DEVICES=8,10,12
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=1
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib:
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+export LMCACHE_LOG_LEVEL=DEBUG
+
+lmcache server \
+  --host 127.0.0.1 \
+  --port 28020 \
+  --http-host 127.0.0.1 \
+  --http-port 28021 \
+  --prometheus-port 28022 \
+  --chunk-size 128 \
+  --l1-size-gb 2 \
+  --max-gpu-workers 2 \
+  --eviction-policy LRU \
+  --supported-transfer-mode lmcache_driven \
+  --l2-store-policy skip_l1 \
+  --l2-prefetch-policy default \
+  --l2-adapter &#x27;{&quot;type&quot;: &quot;plugin&quot;, &quot;module_path&quot;: &quot;lmcache_ascend.v1.distributed.memfabric_l2_adapter&quot;, &quot;class_name&quot;: &quot;MemFabricL2Adapter&quot;, &quot;adapter_params&quot;: {&quot;device_id&quot;: 2, &quot;world_size&quot;: 2, &quot;pool_gb&quot;: 1, &quot;storage_rank&quot;: 1, &quot;slot_size_mb&quot;: 32, &quot;store_url&quot;: &quot;tcp://192.168.0.110:28010&quot;, &quot;data_op_type&quot;: &quot;DEVICE_RDMA&quot;, &quot;device_nic&quot;: &quot;tcp://192.168.0.110:28005&quot;, &quot;enable_56bits_gva&quot;: true, &quot;join_coord_url&quot;: &quot;http://192.168.0.110:28011&quot;, &quot;join_group_id&quot;: &quot;arena-on-tp1-r13&quot;, &quot;register_l1_arena&quot;: true, &quot;l1_registration_chunk_mb&quot;: 32}}&#x27;</code></pre><h4>vllm serve · Prefill</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/arena_tp1/runs/arena-on-tp1-r13/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=8
+export ASCEND_VISIBLE_DEVICES=8
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=3
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib:
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+export LMCACHE_REQUEST_TELEMETRY_TYPE=fastapi
+export LMCACHE_REQUEST_TELEMETRY_ENDPOINT=http://127.0.0.1:28027/api/v1/telemetry
+
+vllm serve /workspace/d00896497/models/Qwen3-8B \
+  --served-model-name mf-l2-gate \
+  --tensor-parallel-size 1 \
+  --dtype bfloat16 \
+  --seed 1024 \
+  --max-model-len 4096 \
+  --max-num-batched-tokens 1024 \
+  --max-num-seqs 1 \
+  --gpu-memory-utilization 0.7 \
+  --block-size 128 \
+  --no-enable-prefix-caching \
+  --enforce-eager \
+  --host 127.0.0.1 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;: &quot;LMCacheMPConnector&quot;, &quot;kv_role&quot;: &quot;kv_both&quot;, &quot;kv_connector_module_path&quot;: &quot;lmcache.integration.vllm.lmcache_mp_connector&quot;, &quot;kv_connector_extra_config&quot;: {&quot;lmcache.mp.host&quot;: &quot;tcp://127.0.0.1&quot;, &quot;lmcache.mp.port&quot;: 28020, &quot;lmcache.mp.mp_transfer_mode&quot;: &quot;lmcache_driven&quot;}}&#x27; \
+  --shutdown-timeout 30 \
+  --port 28023</code></pre><h4>vllm serve · Decode</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/arena_tp1/runs/arena-on-tp1-r13/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=10
+export ASCEND_VISIBLE_DEVICES=10
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=3
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib:
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+
+vllm serve /workspace/d00896497/models/Qwen3-8B \
+  --served-model-name mf-l2-gate \
+  --tensor-parallel-size 1 \
+  --dtype bfloat16 \
+  --seed 1024 \
+  --max-model-len 4096 \
+  --max-num-batched-tokens 1024 \
+  --max-num-seqs 1 \
+  --gpu-memory-utilization 0.7 \
+  --block-size 128 \
+  --no-enable-prefix-caching \
+  --enforce-eager \
+  --host 127.0.0.1 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;: &quot;LMCacheMPConnector&quot;, &quot;kv_role&quot;: &quot;kv_both&quot;, &quot;kv_connector_module_path&quot;: &quot;lmcache.integration.vllm.lmcache_mp_connector&quot;, &quot;kv_connector_extra_config&quot;: {&quot;lmcache.mp.host&quot;: &quot;tcp://127.0.0.1&quot;, &quot;lmcache.mp.port&quot;: 28020, &quot;lmcache.mp.mp_transfer_mode&quot;: &quot;lmcache_driven&quot;}}&#x27; \
+  --shutdown-timeout 30 \
+  --port 28024</code></pre></details><details><summary>128-token 输出 · 第 1 轮</summary><h4>lmcache server</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/arena_tp1/runs/arena-on-tp1-r14/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=8,10,12
+export ASCEND_VISIBLE_DEVICES=8,10,12
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=1
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib:
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+export LMCACHE_LOG_LEVEL=DEBUG
+
+lmcache server \
+  --host 127.0.0.1 \
+  --port 28220 \
+  --http-host 127.0.0.1 \
+  --http-port 28221 \
+  --prometheus-port 28222 \
+  --chunk-size 128 \
+  --l1-size-gb 2 \
+  --max-gpu-workers 2 \
+  --eviction-policy LRU \
+  --supported-transfer-mode lmcache_driven \
+  --l2-store-policy skip_l1 \
+  --l2-prefetch-policy default \
+  --l2-adapter &#x27;{&quot;type&quot;: &quot;plugin&quot;, &quot;module_path&quot;: &quot;lmcache_ascend.v1.distributed.memfabric_l2_adapter&quot;, &quot;class_name&quot;: &quot;MemFabricL2Adapter&quot;, &quot;adapter_params&quot;: {&quot;device_id&quot;: 2, &quot;world_size&quot;: 2, &quot;pool_gb&quot;: 1, &quot;storage_rank&quot;: 1, &quot;slot_size_mb&quot;: 32, &quot;store_url&quot;: &quot;tcp://192.168.0.110:28210&quot;, &quot;data_op_type&quot;: &quot;DEVICE_RDMA&quot;, &quot;device_nic&quot;: &quot;tcp://192.168.0.110:28205&quot;, &quot;enable_56bits_gva&quot;: true, &quot;join_coord_url&quot;: &quot;http://192.168.0.110:28211&quot;, &quot;join_group_id&quot;: &quot;arena-on-tp1-r14&quot;, &quot;register_l1_arena&quot;: true, &quot;l1_registration_chunk_mb&quot;: 32}}&#x27;</code></pre><h4>vllm serve · Prefill</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/arena_tp1/runs/arena-on-tp1-r14/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=8
+export ASCEND_VISIBLE_DEVICES=8
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=3
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib:
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+export LMCACHE_REQUEST_TELEMETRY_TYPE=fastapi
+export LMCACHE_REQUEST_TELEMETRY_ENDPOINT=http://127.0.0.1:28227/api/v1/telemetry
+
+vllm serve /workspace/d00896497/models/Qwen3-8B \
+  --served-model-name mf-l2-gate \
+  --tensor-parallel-size 1 \
+  --dtype bfloat16 \
+  --seed 1024 \
+  --max-model-len 4096 \
+  --max-num-batched-tokens 1024 \
+  --max-num-seqs 1 \
+  --gpu-memory-utilization 0.7 \
+  --block-size 128 \
+  --no-enable-prefix-caching \
+  --enforce-eager \
+  --host 127.0.0.1 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;: &quot;LMCacheMPConnector&quot;, &quot;kv_role&quot;: &quot;kv_both&quot;, &quot;kv_connector_module_path&quot;: &quot;lmcache.integration.vllm.lmcache_mp_connector&quot;, &quot;kv_connector_extra_config&quot;: {&quot;lmcache.mp.host&quot;: &quot;tcp://127.0.0.1&quot;, &quot;lmcache.mp.port&quot;: 28220, &quot;lmcache.mp.mp_transfer_mode&quot;: &quot;lmcache_driven&quot;}}&#x27; \
+  --shutdown-timeout 30 \
+  --port 28223</code></pre><h4>vllm serve · Decode</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/arena_tp1/runs/arena-on-tp1-r14/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=10
+export ASCEND_VISIBLE_DEVICES=10
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=3
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib:
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+
+vllm serve /workspace/d00896497/models/Qwen3-8B \
+  --served-model-name mf-l2-gate \
+  --tensor-parallel-size 1 \
+  --dtype bfloat16 \
+  --seed 1024 \
+  --max-model-len 4096 \
+  --max-num-batched-tokens 1024 \
+  --max-num-seqs 1 \
+  --gpu-memory-utilization 0.7 \
+  --block-size 128 \
+  --no-enable-prefix-caching \
+  --enforce-eager \
+  --host 127.0.0.1 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;: &quot;LMCacheMPConnector&quot;, &quot;kv_role&quot;: &quot;kv_both&quot;, &quot;kv_connector_module_path&quot;: &quot;lmcache.integration.vllm.lmcache_mp_connector&quot;, &quot;kv_connector_extra_config&quot;: {&quot;lmcache.mp.host&quot;: &quot;tcp://127.0.0.1&quot;, &quot;lmcache.mp.port&quot;: 28220, &quot;lmcache.mp.mp_transfer_mode&quot;: &quot;lmcache_driven&quot;}}&#x27; \
+  --shutdown-timeout 30 \
+  --port 28224</code></pre></details><details><summary>128-token 输出 · 第 2 轮</summary><h4>lmcache server</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/arena_tp1/runs/arena-on-tp1-r15/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=8,10,12
+export ASCEND_VISIBLE_DEVICES=8,10,12
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=1
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib:
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+export LMCACHE_LOG_LEVEL=DEBUG
+
+lmcache server \
+  --host 127.0.0.1 \
+  --port 28420 \
+  --http-host 127.0.0.1 \
+  --http-port 28421 \
+  --prometheus-port 28422 \
+  --chunk-size 128 \
+  --l1-size-gb 2 \
+  --max-gpu-workers 2 \
+  --eviction-policy LRU \
+  --supported-transfer-mode lmcache_driven \
+  --l2-store-policy skip_l1 \
+  --l2-prefetch-policy default \
+  --l2-adapter &#x27;{&quot;type&quot;: &quot;plugin&quot;, &quot;module_path&quot;: &quot;lmcache_ascend.v1.distributed.memfabric_l2_adapter&quot;, &quot;class_name&quot;: &quot;MemFabricL2Adapter&quot;, &quot;adapter_params&quot;: {&quot;device_id&quot;: 2, &quot;world_size&quot;: 2, &quot;pool_gb&quot;: 1, &quot;storage_rank&quot;: 1, &quot;slot_size_mb&quot;: 32, &quot;store_url&quot;: &quot;tcp://192.168.0.110:28410&quot;, &quot;data_op_type&quot;: &quot;DEVICE_RDMA&quot;, &quot;device_nic&quot;: &quot;tcp://192.168.0.110:28405&quot;, &quot;enable_56bits_gva&quot;: true, &quot;join_coord_url&quot;: &quot;http://192.168.0.110:28411&quot;, &quot;join_group_id&quot;: &quot;arena-on-tp1-r15&quot;, &quot;register_l1_arena&quot;: true, &quot;l1_registration_chunk_mb&quot;: 32}}&#x27;</code></pre><h4>vllm serve · Prefill</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/arena_tp1/runs/arena-on-tp1-r15/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=8
+export ASCEND_VISIBLE_DEVICES=8
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=3
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib:
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+export LMCACHE_REQUEST_TELEMETRY_TYPE=fastapi
+export LMCACHE_REQUEST_TELEMETRY_ENDPOINT=http://127.0.0.1:28427/api/v1/telemetry
+
+vllm serve /workspace/d00896497/models/Qwen3-8B \
+  --served-model-name mf-l2-gate \
+  --tensor-parallel-size 1 \
+  --dtype bfloat16 \
+  --seed 1024 \
+  --max-model-len 4096 \
+  --max-num-batched-tokens 1024 \
+  --max-num-seqs 1 \
+  --gpu-memory-utilization 0.7 \
+  --block-size 128 \
+  --no-enable-prefix-caching \
+  --enforce-eager \
+  --host 127.0.0.1 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;: &quot;LMCacheMPConnector&quot;, &quot;kv_role&quot;: &quot;kv_both&quot;, &quot;kv_connector_module_path&quot;: &quot;lmcache.integration.vllm.lmcache_mp_connector&quot;, &quot;kv_connector_extra_config&quot;: {&quot;lmcache.mp.host&quot;: &quot;tcp://127.0.0.1&quot;, &quot;lmcache.mp.port&quot;: 28420, &quot;lmcache.mp.mp_transfer_mode&quot;: &quot;lmcache_driven&quot;}}&#x27; \
+  --shutdown-timeout 30 \
+  --port 28423</code></pre><h4>vllm serve · Decode</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/arena_tp1/runs/arena-on-tp1-r15/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=10
+export ASCEND_VISIBLE_DEVICES=10
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=3
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib:
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+
+vllm serve /workspace/d00896497/models/Qwen3-8B \
+  --served-model-name mf-l2-gate \
+  --tensor-parallel-size 1 \
+  --dtype bfloat16 \
+  --seed 1024 \
+  --max-model-len 4096 \
+  --max-num-batched-tokens 1024 \
+  --max-num-seqs 1 \
+  --gpu-memory-utilization 0.7 \
+  --block-size 128 \
+  --no-enable-prefix-caching \
+  --enforce-eager \
+  --host 127.0.0.1 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;: &quot;LMCacheMPConnector&quot;, &quot;kv_role&quot;: &quot;kv_both&quot;, &quot;kv_connector_module_path&quot;: &quot;lmcache.integration.vllm.lmcache_mp_connector&quot;, &quot;kv_connector_extra_config&quot;: {&quot;lmcache.mp.host&quot;: &quot;tcp://127.0.0.1&quot;, &quot;lmcache.mp.port&quot;: 28420, &quot;lmcache.mp.mp_transfer_mode&quot;: &quot;lmcache_driven&quot;}}&#x27; \
+  --shutdown-timeout 30 \
+  --port 28424</code></pre></details></div></details>
+<details><summary>Mooncake Store／Ascend Direct TE · 原生启动命令与环境变量</summary><div class="startup-originals"><details><summary>短输出 · 第 1 轮</summary><h4>lmcache server</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/store_runs/store825-model-r03/model-a13/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=8,10,12
+export ASCEND_VISIBLE_DEVICES=8,10,12
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=1
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/workspace/d00896497/dual_l2_20261102_2310/perf_store_direct_runtime/overlay:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a13:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a13:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/dual_l2_20261102_2310/perf_store_direct_runtime/lib:/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/lib/python3.12/site-packages/torch/lib:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/aarch64-linux/lib64:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+export LMCACHE_LOG_LEVEL=DEBUG
+
+lmcache server \
+  --host 127.0.0.1 \
+  --port 26620 \
+  --http-host 127.0.0.1 \
+  --http-port 26621 \
+  --prometheus-port 26622 \
+  --chunk-size 128 \
+  --l1-size-gb 2 \
+  --max-gpu-workers 2 \
+  --eviction-policy LRU \
+  --supported-transfer-mode lmcache_driven \
+  --l2-store-policy skip_l1 \
+  --l2-prefetch-policy default \
+  --l2-adapter &#x27;{&quot;type&quot;: &quot;plugin&quot;, &quot;module_path&quot;: &quot;store_direct_observed&quot;, &quot;class_name&quot;: &quot;ObservedAscendDirectStoreL2Adapter&quot;, &quot;adapter_params&quot;: {&quot;device_id&quot;: 2, &quot;protocol&quot;: &quot;ascend&quot;, &quot;global_segment_size&quot;: &quot;0&quot;, &quot;local_buffer_size&quot;: &quot;0&quot;, &quot;num_workers&quot;: 1, &quot;local_hostname&quot;: &quot;192.168.0.110:25332&quot;, &quot;metadata_server&quot;: &quot;http://192.168.0.110:25301/metadata&quot;, &quot;master_server_addr&quot;: &quot;192.168.0.110:25300&quot;}}&#x27;</code></pre><h4>vllm serve · Prefill</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/store_runs/store825-model-r03/model-a13/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=8
+export ASCEND_VISIBLE_DEVICES=8
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=3
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a13:/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a13:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib:
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+export LMCACHE_REQUEST_TELEMETRY_TYPE=fastapi
+export LMCACHE_REQUEST_TELEMETRY_ENDPOINT=http://127.0.0.1:26627/api/v1/telemetry
+
+vllm serve /workspace/d00896497/models/Qwen3-8B \
+  --served-model-name mf-l2-gate \
+  --tensor-parallel-size 1 \
+  --dtype bfloat16 \
+  --seed 1024 \
+  --max-model-len 4096 \
+  --max-num-batched-tokens 1024 \
+  --max-num-seqs 1 \
+  --gpu-memory-utilization 0.7 \
+  --block-size 128 \
+  --no-enable-prefix-caching \
+  --enforce-eager \
+  --host 127.0.0.1 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;: &quot;LMCacheMPConnector&quot;, &quot;kv_role&quot;: &quot;kv_both&quot;, &quot;kv_connector_module_path&quot;: &quot;lmcache.integration.vllm.lmcache_mp_connector&quot;, &quot;kv_connector_extra_config&quot;: {&quot;lmcache.mp.host&quot;: &quot;tcp://127.0.0.1&quot;, &quot;lmcache.mp.port&quot;: 26620, &quot;lmcache.mp.mp_transfer_mode&quot;: &quot;lmcache_driven&quot;}}&#x27; \
+  --shutdown-timeout 30 \
+  --port 26623</code></pre><h4>vllm serve · Decode</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/store_runs/store825-model-r03/model-a13/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=10
+export ASCEND_VISIBLE_DEVICES=10
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=3
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a13:/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a13:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib:
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+
+vllm serve /workspace/d00896497/models/Qwen3-8B \
+  --served-model-name mf-l2-gate \
+  --tensor-parallel-size 1 \
+  --dtype bfloat16 \
+  --seed 1024 \
+  --max-model-len 4096 \
+  --max-num-batched-tokens 1024 \
+  --max-num-seqs 1 \
+  --gpu-memory-utilization 0.7 \
+  --block-size 128 \
+  --no-enable-prefix-caching \
+  --enforce-eager \
+  --host 127.0.0.1 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;: &quot;LMCacheMPConnector&quot;, &quot;kv_role&quot;: &quot;kv_both&quot;, &quot;kv_connector_module_path&quot;: &quot;lmcache.integration.vllm.lmcache_mp_connector&quot;, &quot;kv_connector_extra_config&quot;: {&quot;lmcache.mp.host&quot;: &quot;tcp://127.0.0.1&quot;, &quot;lmcache.mp.port&quot;: 26620, &quot;lmcache.mp.mp_transfer_mode&quot;: &quot;lmcache_driven&quot;}}&#x27; \
+  --shutdown-timeout 30 \
+  --port 26624</code></pre></details><details><summary>短输出 · 第 2 轮</summary><h4>lmcache server</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/store_runs/store825-model-r03/model-a14/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=8,10,12
+export ASCEND_VISIBLE_DEVICES=8,10,12
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=1
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/workspace/d00896497/dual_l2_20261102_2310/perf_store_direct_runtime/overlay:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a14:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a14:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/dual_l2_20261102_2310/perf_store_direct_runtime/lib:/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/lib/python3.12/site-packages/torch/lib:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/aarch64-linux/lib64:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+export LMCACHE_LOG_LEVEL=DEBUG
+
+lmcache server \
+  --host 127.0.0.1 \
+  --port 26720 \
+  --http-host 127.0.0.1 \
+  --http-port 26721 \
+  --prometheus-port 26722 \
+  --chunk-size 128 \
+  --l1-size-gb 2 \
+  --max-gpu-workers 2 \
+  --eviction-policy LRU \
+  --supported-transfer-mode lmcache_driven \
+  --l2-store-policy skip_l1 \
+  --l2-prefetch-policy default \
+  --l2-adapter &#x27;{&quot;type&quot;: &quot;plugin&quot;, &quot;module_path&quot;: &quot;store_direct_observed&quot;, &quot;class_name&quot;: &quot;ObservedAscendDirectStoreL2Adapter&quot;, &quot;adapter_params&quot;: {&quot;device_id&quot;: 2, &quot;protocol&quot;: &quot;ascend&quot;, &quot;global_segment_size&quot;: &quot;0&quot;, &quot;local_buffer_size&quot;: &quot;0&quot;, &quot;num_workers&quot;: 1, &quot;local_hostname&quot;: &quot;192.168.0.110:25333&quot;, &quot;metadata_server&quot;: &quot;http://192.168.0.110:25301/metadata&quot;, &quot;master_server_addr&quot;: &quot;192.168.0.110:25300&quot;}}&#x27;</code></pre><h4>vllm serve · Prefill</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/store_runs/store825-model-r03/model-a14/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=8
+export ASCEND_VISIBLE_DEVICES=8
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=3
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a14:/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a14:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib:
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+export LMCACHE_REQUEST_TELEMETRY_TYPE=fastapi
+export LMCACHE_REQUEST_TELEMETRY_ENDPOINT=http://127.0.0.1:26727/api/v1/telemetry
+
+vllm serve /workspace/d00896497/models/Qwen3-8B \
+  --served-model-name mf-l2-gate \
+  --tensor-parallel-size 1 \
+  --dtype bfloat16 \
+  --seed 1024 \
+  --max-model-len 4096 \
+  --max-num-batched-tokens 1024 \
+  --max-num-seqs 1 \
+  --gpu-memory-utilization 0.7 \
+  --block-size 128 \
+  --no-enable-prefix-caching \
+  --enforce-eager \
+  --host 127.0.0.1 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;: &quot;LMCacheMPConnector&quot;, &quot;kv_role&quot;: &quot;kv_both&quot;, &quot;kv_connector_module_path&quot;: &quot;lmcache.integration.vllm.lmcache_mp_connector&quot;, &quot;kv_connector_extra_config&quot;: {&quot;lmcache.mp.host&quot;: &quot;tcp://127.0.0.1&quot;, &quot;lmcache.mp.port&quot;: 26720, &quot;lmcache.mp.mp_transfer_mode&quot;: &quot;lmcache_driven&quot;}}&#x27; \
+  --shutdown-timeout 30 \
+  --port 26723</code></pre><h4>vllm serve · Decode</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/store_runs/store825-model-r03/model-a14/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=10
+export ASCEND_VISIBLE_DEVICES=10
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=3
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a14:/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a14:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib:
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+
+vllm serve /workspace/d00896497/models/Qwen3-8B \
+  --served-model-name mf-l2-gate \
+  --tensor-parallel-size 1 \
+  --dtype bfloat16 \
+  --seed 1024 \
+  --max-model-len 4096 \
+  --max-num-batched-tokens 1024 \
+  --max-num-seqs 1 \
+  --gpu-memory-utilization 0.7 \
+  --block-size 128 \
+  --no-enable-prefix-caching \
+  --enforce-eager \
+  --host 127.0.0.1 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;: &quot;LMCacheMPConnector&quot;, &quot;kv_role&quot;: &quot;kv_both&quot;, &quot;kv_connector_module_path&quot;: &quot;lmcache.integration.vllm.lmcache_mp_connector&quot;, &quot;kv_connector_extra_config&quot;: {&quot;lmcache.mp.host&quot;: &quot;tcp://127.0.0.1&quot;, &quot;lmcache.mp.port&quot;: 26720, &quot;lmcache.mp.mp_transfer_mode&quot;: &quot;lmcache_driven&quot;}}&#x27; \
+  --shutdown-timeout 30 \
+  --port 26724</code></pre></details><details><summary>128-token 输出 · 第 1 轮</summary><h4>lmcache server</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/store_runs/store825-model-r03/model-a15/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=8,10,12
+export ASCEND_VISIBLE_DEVICES=8,10,12
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=1
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/workspace/d00896497/dual_l2_20261102_2310/perf_store_direct_runtime/overlay:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a15:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a15:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/dual_l2_20261102_2310/perf_store_direct_runtime/lib:/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/lib/python3.12/site-packages/torch/lib:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/aarch64-linux/lib64:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+export LMCACHE_LOG_LEVEL=DEBUG
+
+lmcache server \
+  --host 127.0.0.1 \
+  --port 26820 \
+  --http-host 127.0.0.1 \
+  --http-port 26821 \
+  --prometheus-port 26822 \
+  --chunk-size 128 \
+  --l1-size-gb 2 \
+  --max-gpu-workers 2 \
+  --eviction-policy LRU \
+  --supported-transfer-mode lmcache_driven \
+  --l2-store-policy skip_l1 \
+  --l2-prefetch-policy default \
+  --l2-adapter &#x27;{&quot;type&quot;: &quot;plugin&quot;, &quot;module_path&quot;: &quot;store_direct_observed&quot;, &quot;class_name&quot;: &quot;ObservedAscendDirectStoreL2Adapter&quot;, &quot;adapter_params&quot;: {&quot;device_id&quot;: 2, &quot;protocol&quot;: &quot;ascend&quot;, &quot;global_segment_size&quot;: &quot;0&quot;, &quot;local_buffer_size&quot;: &quot;0&quot;, &quot;num_workers&quot;: 1, &quot;local_hostname&quot;: &quot;192.168.0.110:25334&quot;, &quot;metadata_server&quot;: &quot;http://192.168.0.110:25301/metadata&quot;, &quot;master_server_addr&quot;: &quot;192.168.0.110:25300&quot;}}&#x27;</code></pre><h4>vllm serve · Prefill</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/store_runs/store825-model-r03/model-a15/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=8
+export ASCEND_VISIBLE_DEVICES=8
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=3
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a15:/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a15:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib:
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+export LMCACHE_REQUEST_TELEMETRY_TYPE=fastapi
+export LMCACHE_REQUEST_TELEMETRY_ENDPOINT=http://127.0.0.1:26827/api/v1/telemetry
+
+vllm serve /workspace/d00896497/models/Qwen3-8B \
+  --served-model-name mf-l2-gate \
+  --tensor-parallel-size 1 \
+  --dtype bfloat16 \
+  --seed 1024 \
+  --max-model-len 4096 \
+  --max-num-batched-tokens 1024 \
+  --max-num-seqs 1 \
+  --gpu-memory-utilization 0.7 \
+  --block-size 128 \
+  --no-enable-prefix-caching \
+  --enforce-eager \
+  --host 127.0.0.1 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;: &quot;LMCacheMPConnector&quot;, &quot;kv_role&quot;: &quot;kv_both&quot;, &quot;kv_connector_module_path&quot;: &quot;lmcache.integration.vllm.lmcache_mp_connector&quot;, &quot;kv_connector_extra_config&quot;: {&quot;lmcache.mp.host&quot;: &quot;tcp://127.0.0.1&quot;, &quot;lmcache.mp.port&quot;: 26820, &quot;lmcache.mp.mp_transfer_mode&quot;: &quot;lmcache_driven&quot;}}&#x27; \
+  --shutdown-timeout 30 \
+  --port 26823</code></pre><h4>vllm serve · Decode</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/store_runs/store825-model-r03/model-a15/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=10
+export ASCEND_VISIBLE_DEVICES=10
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=3
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a15:/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a15:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib:
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+
+vllm serve /workspace/d00896497/models/Qwen3-8B \
+  --served-model-name mf-l2-gate \
+  --tensor-parallel-size 1 \
+  --dtype bfloat16 \
+  --seed 1024 \
+  --max-model-len 4096 \
+  --max-num-batched-tokens 1024 \
+  --max-num-seqs 1 \
+  --gpu-memory-utilization 0.7 \
+  --block-size 128 \
+  --no-enable-prefix-caching \
+  --enforce-eager \
+  --host 127.0.0.1 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;: &quot;LMCacheMPConnector&quot;, &quot;kv_role&quot;: &quot;kv_both&quot;, &quot;kv_connector_module_path&quot;: &quot;lmcache.integration.vllm.lmcache_mp_connector&quot;, &quot;kv_connector_extra_config&quot;: {&quot;lmcache.mp.host&quot;: &quot;tcp://127.0.0.1&quot;, &quot;lmcache.mp.port&quot;: 26820, &quot;lmcache.mp.mp_transfer_mode&quot;: &quot;lmcache_driven&quot;}}&#x27; \
+  --shutdown-timeout 30 \
+  --port 26824</code></pre></details><details><summary>128-token 输出 · 第 2 轮</summary><h4>lmcache server</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/store_runs/store825-model-r03/model-a16/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=8,10,12
+export ASCEND_VISIBLE_DEVICES=8,10,12
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=1
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/workspace/d00896497/dual_l2_20261102_2310/perf_store_direct_runtime/overlay:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a16:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a16:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/dual_l2_20261102_2310/perf_store_direct_runtime/lib:/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/lib/python3.12/site-packages/torch/lib:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/aarch64-linux/lib64:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+export LMCACHE_LOG_LEVEL=DEBUG
+
+lmcache server \
+  --host 127.0.0.1 \
+  --port 26920 \
+  --http-host 127.0.0.1 \
+  --http-port 26921 \
+  --prometheus-port 26922 \
+  --chunk-size 128 \
+  --l1-size-gb 2 \
+  --max-gpu-workers 2 \
+  --eviction-policy LRU \
+  --supported-transfer-mode lmcache_driven \
+  --l2-store-policy skip_l1 \
+  --l2-prefetch-policy default \
+  --l2-adapter &#x27;{&quot;type&quot;: &quot;plugin&quot;, &quot;module_path&quot;: &quot;store_direct_observed&quot;, &quot;class_name&quot;: &quot;ObservedAscendDirectStoreL2Adapter&quot;, &quot;adapter_params&quot;: {&quot;device_id&quot;: 2, &quot;protocol&quot;: &quot;ascend&quot;, &quot;global_segment_size&quot;: &quot;0&quot;, &quot;local_buffer_size&quot;: &quot;0&quot;, &quot;num_workers&quot;: 1, &quot;local_hostname&quot;: &quot;192.168.0.110:25335&quot;, &quot;metadata_server&quot;: &quot;http://192.168.0.110:25301/metadata&quot;, &quot;master_server_addr&quot;: &quot;192.168.0.110:25300&quot;}}&#x27;</code></pre><h4>vllm serve · Prefill</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/store_runs/store825-model-r03/model-a16/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=8
+export ASCEND_VISIBLE_DEVICES=8
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=3
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a16:/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a16:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib:
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+export LMCACHE_REQUEST_TELEMETRY_TYPE=fastapi
+export LMCACHE_REQUEST_TELEMETRY_ENDPOINT=http://127.0.0.1:26927/api/v1/telemetry
+
+vllm serve /workspace/d00896497/models/Qwen3-8B \
+  --served-model-name mf-l2-gate \
+  --tensor-parallel-size 1 \
+  --dtype bfloat16 \
+  --seed 1024 \
+  --max-model-len 4096 \
+  --max-num-batched-tokens 1024 \
+  --max-num-seqs 1 \
+  --gpu-memory-utilization 0.7 \
+  --block-size 128 \
+  --no-enable-prefix-caching \
+  --enforce-eager \
+  --host 127.0.0.1 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;: &quot;LMCacheMPConnector&quot;, &quot;kv_role&quot;: &quot;kv_both&quot;, &quot;kv_connector_module_path&quot;: &quot;lmcache.integration.vllm.lmcache_mp_connector&quot;, &quot;kv_connector_extra_config&quot;: {&quot;lmcache.mp.host&quot;: &quot;tcp://127.0.0.1&quot;, &quot;lmcache.mp.port&quot;: 26920, &quot;lmcache.mp.mp_transfer_mode&quot;: &quot;lmcache_driven&quot;}}&#x27; \
+  --shutdown-timeout 30 \
+  --port 26923</code></pre><h4>vllm serve · Decode</h4><pre tabindex="0"><code>export PATH=/workspace/d00896497/l2_single_ready_20261102_2205/runtime_no_mooncake/bin:&quot;$PATH&quot;
+export HOME=/workspace/d00896497/dual_l2_20261102_2310/store_runs/store825-model-r03/model-a16/runtime_home
+export LMCACHE_CORE_SOURCE=/workspace/d00896497/dual_l2_20261102_2310/LMCache
+export ASCEND_RT_VISIBLE_DEVICES=10
+export ASCEND_VISIBLE_DEVICES=10
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export HCCL_INTRA_ROCE_ENABLE=1
+export TASK_QUEUE_ENABLE=1
+export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+export ASCEND_GLOBAL_LOG_LEVEL=3
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export PYTHONPATH=/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a16:/workspace/d00896497/dual_l2_20261102_2310/LMCache:/workspace/d00896497/dual_l2_20261102_2310/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/workspace/d00896497/dual_l2_20261102_2310/store_model_tools_a16:/workspace/d00896497/src/LMCache:/workspace/d00896497/src/LMCache-Ascend:/usr/local/Ascend/cann-9.1.0/python/site-packages:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:
+export LD_LIBRARY_PATH=/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/cann-9.1.0/lib64:/usr/local/Ascend/cann-9.1.0/lib64/plugin/opskernel:/usr/local/Ascend/cann-9.1.0/lib64/plugin/nnengine:/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/workspace/d00896497/driver_copy/lib64/driver:/workspace/d00896497/driver_copy/lib64:/workspace/d00896497/dcmi_copy:/workspace/d00896497/src/LMCache-Ascend/lmcache_ascend:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/python3.12.13/lib:
+unset ASCEND_ENABLE_USE_FABRIC_MEM ASCEND_LAUNCH_BLOCKING PYTORCH_NPU_ALLOC_CONF LMCACHE_REQUEST_TELEMETRY_TYPE LMCACHE_REQUEST_TELEMETRY_ENDPOINT
+
+vllm serve /workspace/d00896497/models/Qwen3-8B \
+  --served-model-name mf-l2-gate \
+  --tensor-parallel-size 1 \
+  --dtype bfloat16 \
+  --seed 1024 \
+  --max-model-len 4096 \
+  --max-num-batched-tokens 1024 \
+  --max-num-seqs 1 \
+  --gpu-memory-utilization 0.7 \
+  --block-size 128 \
+  --no-enable-prefix-caching \
+  --enforce-eager \
+  --host 127.0.0.1 \
+  --kv-transfer-config &#x27;{&quot;kv_connector&quot;: &quot;LMCacheMPConnector&quot;, &quot;kv_role&quot;: &quot;kv_both&quot;, &quot;kv_connector_module_path&quot;: &quot;lmcache.integration.vllm.lmcache_mp_connector&quot;, &quot;kv_connector_extra_config&quot;: {&quot;lmcache.mp.host&quot;: &quot;tcp://127.0.0.1&quot;, &quot;lmcache.mp.port&quot;: 26920, &quot;lmcache.mp.mp_transfer_mode&quot;: &quot;lmcache_driven&quot;}}&#x27; \
+  --shutdown-timeout 30 \
+  --port 26924</code></pre></details></div></details></div>
+<p class="source"><a href="../../routes/l2/runs/20261102_dual_2310/store_warm_readout/canonical_readout/RESULTS.md">Qwen3 逐轮结果和原始指标索引</a></p>
+
+<h3>C　搬运微基准 · DEVICE_RDMA 注册复用</h3>
+<div class="table"><table><thead><tr><th scope="col">18 MiB 跨机搬运均值</th><th scope="col">BM 逐次注册</th><th scope="col">BM 预注册</th><th scope="col">Mooncake Ascend Direct TE</th></tr></thead><tbody>
+<tr><th scope="row">写入（ms）</th><td>10.939</td><td>0.890</td><td>0.867</td></tr>
+<tr><th scope="row">读取（ms）</th><td>10.920</td><td>0.932</td><td>0.867</td></tr>
+</tbody></table></div>
+<p>8 号机发起、25 号机接收，单线程、同步单笔，18 MiB 每方向 300 个正式样本。BM 使用 DEVICE_RDMA、56-bit GVA、HOST 内存，预注册组在计时前注册 64 MiB 缓冲。TE 使用 Ascend RoCE 和 ACL Host 缓冲。逐次注册组的计时包含注册和注销。预注册后 BM 的 18 MiB 搬运均值与 TE 接近，初始化及注册成本另计。</p>
+<p class="source"><a href="../../routes/l2/runs/20261102_dual_2310/raw_perf_baseline_readout/raw_perf_baseline_readout.md">搬运原始采样与计时说明</a></p>
+
+
+</section>
+</main></body></html>
